@@ -598,6 +598,8 @@ public final class ExtraSettingsRepository {
 			settings.put("mobile_tooltip_mode", TOOLTIP_MODE_LONG_PRESS);
 			settings.put("mobile_tooltip_long_press_ms", 500);
 			settings.put("quick_sl_enabled", false);
+			// Hand sits low like STS1 mobile (card tops ~76% down, bottoms cut off).
+			settings.put("show_more_hand_card_text_lift_height_percent", 25);
 		});
 		// The game targets 60 fps; on 120 Hz panels this gives steadier frame
 		// pacing and less heat (upstream issue #94: 29-38 ms -> ~16.7 ms frames).
