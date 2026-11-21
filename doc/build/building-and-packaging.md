@@ -425,7 +425,7 @@ Java 不再把 `fullscreen_render_size` 转换为 Godot `--resolution`。根窗�
 
 ## 10. 构建直装版 APK
 
-直装版临时内置本地 PC zip。启动器会按内置 zip 的 SHA-256 判断当前 APK 自带本体是否已导入；如果用户从旧直装版升级且只导入过旧 APK 的本体，新 APK 首次进入主界面后会自动导入当前内置 zip，并为新 payload 创建/选择默认启动配置。
+直装版临时内置本地 PC zip。启动器按 APK 中央目录里该 asset 条目的 CRC-32 + 大小（写入 payload manifest `source.bundled_identity`）判断当前 APK 自带本体是否已导入，不再对 2 GB zip 做 SHA-256；旧版本导入、只有 `source.sha256` 的 payload 会按 SHA-256 比对一次并补写该字段。首次导入直接从 asset 流解压到 staging（不再先复制整个 zip），失败时回退到旧的“复制 + 解压”路径；如果用户从旧直装版升级且只导入过旧 APK 的本体，新 APK 首次进入主界面后会自动导入当前内置 zip，并为新 payload 创建/选择默认启动配置。
 
 ```bash
 tools/package/build_direct_apk.sh "/path/to/SlayTheSpire2.zip"

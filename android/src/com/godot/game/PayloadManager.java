@@ -16,13 +16,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.List;
 import java.util.zip.ZipInputStream;
 import java.util.Locale;
 import java.util.UUID;
@@ -75,6 +78,7 @@ public final class PayloadManager {
 	private static final String PREFS_NAME = "sts2_payload_manager";
 	private static final String KEY_BUNDLED_PAYLOAD_SHA256 = "bundled_payload_sha256";
 	private static final String KEY_BUNDLED_PAYLOAD_PACKAGE_UPDATED_AT = "bundled_payload_package_updated_at";
+	private static final String KEY_SOURCE_BUNDLED_IDENTITY = "bundled_identity";
 
 	private static final int BUFFER_SIZE = 1024 * 1024;
 	private static final int PCK_MAGIC_G = 0x47;
@@ -152,20 +156,83 @@ public final class PayloadManager {
 		if (!hasBundledPayload()) {
 			return false;
 		}
-		String bundledSha256 = getCurrentBundledPayloadSha256();
-		if (TextUtils.isEmpty(bundledSha256)) {
-			return false;
-		}
+		String identity = getBundledPayloadIdentity();
+		List<LaunchProfileManager.GamePayload> legacy = new ArrayList<>();
 		for (LaunchProfileManager.GamePayload payload : new LaunchProfileManager(context).listPayloads()) {
 			if (payload == null || !payload.ready || payload.manifest == null) {
 				continue;
 			}
 			JSONObject source = payload.manifest.optJSONObject("source");
-			if (source != null && bundledSha256.equalsIgnoreCase(source.optString("sha256", ""))) {
+			if (source == null) {
+				continue;
+			}
+			String recorded = source.optString(KEY_SOURCE_BUNDLED_IDENTITY, "");
+			if (!identity.isEmpty() && identity.equals(recorded)) {
+				return true;
+			}
+			if (recorded.isEmpty() && !TextUtils.isEmpty(source.optString("sha256", ""))) {
+				legacy.add(payload);
+			}
+		}
+		if (legacy.isEmpty() && !identity.isEmpty()) {
+			return false;
+		}
+		// Payload imported by an older build (full SHA-256 only), or the APK directory could not be
+		// read: fall back to hashing the bundled zip once (cached per APK install).
+		String bundledSha256 = getCurrentBundledPayloadSha256();
+		for (LaunchProfileManager.GamePayload payload : legacy) {
+			JSONObject source = payload.manifest.optJSONObject("source");
+			if (bundledSha256.equalsIgnoreCase(source.optString("sha256", ""))) {
+				if (!identity.isEmpty()) {
+					recordBundledIdentity(payload.gameDir, identity);
+				}
 				return true;
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Cheap identity of the bundled payload: CRC-32 and size of the stored asset entry, read
+	 * from the APK's zip central directory (no 2 GB hash). Empty when it cannot be read.
+	 */
+	private String getBundledPayloadIdentity() {
+		return bundledPayloadIdentity(readBundledPayloadApkEntry());
+	}
+
+	private static String bundledPayloadIdentity(ZipEntry entry) {
+		if (entry == null || entry.getCrc() < 0 || entry.getSize() <= 0) {
+			return "";
+		}
+		return "apk-entry-crc32:" + Long.toHexString(entry.getCrc()) + ":" + entry.getSize();
+	}
+
+	private ZipEntry readBundledPayloadApkEntry() {
+		try (ZipFile apk = new ZipFile(context.getApplicationInfo().sourceDir)) {
+			return apk.getEntry("assets/" + BUNDLED_PAYLOAD_ASSET);
+		} catch (Exception exception) {
+			android.util.Log.w("Sts2Re", "Unable to read bundled payload entry from APK directory.", exception);
+			return null;
+		}
+	}
+
+	private void recordBundledIdentity(File gameDir, String identity) {
+		try {
+			File manifestFile = new File(gameDir, MANIFEST_FILE_NAME);
+			JSONObject root = new JSONObject(readTextFile(manifestFile));
+			JSONObject source = root.optJSONObject("source");
+			if (source == null) {
+				return;
+			}
+			source.put(KEY_SOURCE_BUNDLED_IDENTITY, identity);
+			File temp = new File(gameDir, MANIFEST_FILE_NAME + ".tmp");
+			writeTextFile(temp, root.toString(2));
+			if (!temp.renameTo(manifestFile)) {
+				deleteIfExists(temp);
+			}
+		} catch (Exception exception) {
+			android.util.Log.w("Sts2Re", "Unable to record bundled payload identity.", exception);
+		}
 	}
 
 	public Status importPayloadZip(Uri uri) throws Exception {
@@ -208,15 +275,107 @@ public final class PayloadManager {
 		if (!hasBundledPayload()) {
 			throw new IOException("Bundled payload asset is not present: " + BUNDLED_PAYLOAD_ASSET);
 		}
+		ZipEntry apkEntry = readBundledPayloadApkEntry();
+		long assetSize = apkEntry == null ? -1L : apkEntry.getSize();
+		String identity = bundledPayloadIdentity(apkEntry);
+		if (!identity.isEmpty()) {
+			try {
+				return extractBundledPayloadDirect(identity, assetSize, progressListener, control);
+			} catch (Exception exception) {
+				if ((control != null && control.isCancelled()) || Thread.currentThread().isInterrupted()) {
+					throw exception;
+				}
+				android.util.Log.w("Sts2Re", "Direct bundled payload extraction failed; falling back to copy + extract.", exception);
+			}
+		}
 		ensureDirectory(getImportRootDir());
 		File sourceZip = new File(getImportRootDir(), "bundled-source-" + UUID.randomUUID() + ".zip");
 		String sha256;
 		reportProgress(progressListener, 1, "copy");
 		try (InputStream inputStream = context.getAssets().open(BUNDLED_PAYLOAD_ASSET)) {
-			sha256 = copyToFileWithSha256(inputStream, sourceZip, -1, progressListener, control, 1, 35);
+			sha256 = copyToFileWithSha256(inputStream, sourceZip, assetSize, progressListener, control, 1, 35);
 		}
-		SourceInfo source = new SourceInfo("bundled_zip", "SlayTheSpire2.zip", sourceZip.length(), sha256);
+		JSONObject extras = null;
+		if (!identity.isEmpty()) {
+			extras = new JSONObject();
+			extras.put(KEY_SOURCE_BUNDLED_IDENTITY, identity);
+		}
+		SourceInfo source = new SourceInfo("bundled_zip", "SlayTheSpire2.zip", sourceZip.length(), sha256, extras);
 		return installFromZip(sourceZip, source, progressListener, control);
+	}
+
+	/**
+	 * Unpacks the bundled game zip straight from the APK asset stream into a fresh staging
+	 * directory (no 2 GB temp copy, no full-file hash; ZipInputStream still verifies each
+	 * entry's CRC-32). Nothing becomes visible until installPreparedDirectory() renames the
+	 * validated staging directory into place, so an interrupted run leaves only scratch that
+	 * the next import deletes.
+	 */
+	private Status extractBundledPayloadDirect(String identity, long assetSize, ProgressListener progressListener, ImportControl control) throws Exception {
+		File importRoot = getImportRootDir();
+		ensureDirectory(importRoot);
+		cleanupOldImportScratch(importRoot, null);
+		File staging = new File(importRoot, "staging-" + UUID.randomUUID());
+		JSONObject extras = new JSONObject();
+		extras.put(KEY_SOURCE_BUNDLED_IDENTITY, identity);
+		SourceInfo source = new SourceInfo("bundled_zip", "SlayTheSpire2.zip", assetSize, "", extras);
+		try {
+			ensureDirectory(staging);
+			reportProgress(progressListener, 1, "extract");
+			String canonicalRoot = staging.getCanonicalPath();
+			try (CountingInputStream counted = new CountingInputStream(context.getAssets().open(BUNDLED_PAYLOAD_ASSET));
+				 ZipInputStream zipInput = new ZipInputStream(counted)) {
+				ByteProgress progress = bytes -> {
+					if (assetSize > 0) {
+						reportProgress(progressListener, 1 + (int) Math.min(84L, (counted.count * 84L) / assetSize), "extract");
+					}
+				};
+				ZipEntry entry;
+				while ((entry = zipInput.getNextEntry()) != null) {
+					checkCancelled(control);
+					extractEntry(staging, canonicalRoot, entry, zipInput, progress, control);
+					zipInput.closeEntry();
+				}
+			}
+			return installPreparedDirectory(staging, source, progressListener, control, true);
+		} finally {
+			deleteRecursively(staging);
+		}
+	}
+
+	private static final class CountingInputStream extends FilterInputStream {
+		long count;
+
+		CountingInputStream(InputStream in) {
+			super(in);
+		}
+
+		@Override
+		public int read() throws IOException {
+			int value = super.read();
+			if (value >= 0) {
+				count++;
+			}
+			return value;
+		}
+
+		@Override
+		public int read(byte[] buffer, int offset, int length) throws IOException {
+			int read = super.read(buffer, offset, length);
+			if (read > 0) {
+				count += read;
+			}
+			return read;
+		}
+
+		@Override
+		public long skip(long n) throws IOException {
+			long skipped = super.skip(n);
+			if (skipped > 0) {
+				count += skipped;
+			}
+			return skipped;
+		}
 	}
 
 	public void clearPayload() {
@@ -276,14 +435,21 @@ public final class PayloadManager {
 			checkCancelled(control);
 			reportProgress(progressListener, 86, "validate");
 			normalizePayloadRootIfNeeded(staging);
-			Validation validation = validateGameDir(staging);
-			reportProgress(progressListener, 91, "patch");
+			validateGameDir(staging, false, null);
+			reportProgress(progressListener, 87, "patch");
 			PckPatcher.PatchResult patchResult = patchPayloadPck(staging);
 			checkCancelled(control);
-			validation = validateGameDir(staging);
+			// Hash only once, after patching (the pre-patch hashes were thrown away); the PCK
+			// hash is ~2 GB of reading, so let it drive the progress from 88 to 97.
+			long pckLength = new File(staging, PCK_FILE_NAME).length();
+			Validation validation = validateGameDir(staging, true, bytes -> {
+				if (pckLength > 0) {
+					reportProgress(progressListener, 88 + (int) Math.min(9L, (bytes * 9L) / pckLength), "validate");
+				}
+			});
 			writeManifest(staging, source, validation, patchResult);
 
-			reportProgress(progressListener, 96, "install");
+			reportProgress(progressListener, 98, "install");
 			LaunchProfileManager launchProfiles = new LaunchProfileManager(context);
 			JSONObject manifest = new JSONObject(readTextFile(new File(staging, MANIFEST_FILE_NAME)));
 			String payloadId = launchProfiles.buildPayloadId(manifest);
@@ -487,7 +653,7 @@ public final class PayloadManager {
 			&& new File(gameDir, STS2_RUNTIME_CONFIG_PATH).isFile();
 	}
 
-	private Validation validateGameDir(File gameDir) throws Exception {
+	private Validation validateGameDir(File gameDir, boolean computeHashes, ByteProgress pckHashProgress) throws Exception {
 		if (!gameDir.isDirectory()) {
 			throw new IOException("Payload directory is missing.");
 		}
@@ -503,9 +669,16 @@ public final class PayloadManager {
 		requireFile(runtimeConfig, "Missing " + STS2_RUNTIME_CONFIG_PATH);
 		validatePckMagic(pck);
 		JSONObject releaseInfo = new JSONObject(readTextFile(releaseInfoFile));
+		if (!computeHashes) {
+			return null;
+		}
 		Counter counter = new Counter();
 		countFiles(gameDir, counter);
-		return new Validation(releaseInfo, pck.length(), sts2Dll.length(), counter.files, counter.bytes, sha256(sts2Dll), sha256(pck));
+		String pckSha256;
+		try (InputStream inputStream = new FileInputStream(pck)) {
+			pckSha256 = sha256(inputStream, pckHashProgress);
+		}
+		return new Validation(releaseInfo, pck.length(), sts2Dll.length(), counter.files, counter.bytes, sha256(sts2Dll), pckSha256);
 	}
 
 	private PckPatcher.PatchResult patchPayloadPck(File gameDir) throws IOException {
@@ -860,11 +1033,20 @@ public final class PayloadManager {
 	}
 
 	private String sha256(InputStream inputStream) throws Exception {
+		return sha256(inputStream, null);
+	}
+
+	private String sha256(InputStream inputStream, ByteProgress progress) throws Exception {
 		MessageDigest digest = MessageDigest.getInstance("SHA-256");
-		byte[] buffer = new byte[8192];
+		byte[] buffer = new byte[BUFFER_SIZE];
 		int read;
+		long total = 0L;
 		while ((read = inputStream.read(buffer)) != -1) {
 			digest.update(buffer, 0, read);
+			total += read;
+			if (progress != null) {
+				progress.onBytes(total);
+			}
 		}
 		return toHex(digest.digest());
 	}
