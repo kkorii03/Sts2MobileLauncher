@@ -177,6 +177,12 @@ public class GodotApp extends GodotActivity {
 		StartupHealthTracker.markGameLaunchStarted(this);
 		applyConfiguredScreenOrientation();
 		EdgeToEdge.enable(this);
+		// Hide the bars before the first frame (Godot re-applies its own immersive
+		// state once the engine is up) so no status bar flashes between the black
+		// boot screen and the game (standalone build).
+		if (new PayloadManager(this).hasBundledPayload()) {
+			SystemBarInsetsHelper.hideSystemBars(this);
+		}
 		allowDrawingIntoDisplayCutout();
 		boolean audioCompatibilityMode = false;
 		try {

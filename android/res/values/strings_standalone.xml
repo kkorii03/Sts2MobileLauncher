@@ -2,4 +2,10 @@
 <resources>
 	<string name="standalone_preparing_game">Preparing game data… %1$d%%</string>
 	<string name="standalone_starting_game">Starting game…</string>
+	<string name="standalone_launch_failed">The game could not be started.\nPlease try again.</string>
+	<string name="standalone_launch_failed_storage">There is not enough storage space.\nFree up some space and try again.</string>
+	<string name="standalone_retry">Retry</string>
+	<string name="standalone_quit">Quit</string>
+	<string name="standalone_crash_message">Something went wrong. The game will restart.</string>
+	<string name="standalone_crash_ok">OK</string>
 </resources>

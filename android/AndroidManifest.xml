@@ -51,17 +51,19 @@
         <activity
             android:name=".GameSettingsActivity"
             android:label="@string/godot_project_name_string"
-            android:theme="@style/Theme.Sts2ExtraSettings"
+            android:theme="@style/Theme.Sts2Launch"
             android:icon="@mipmap/icon"
             android:exported="true"
-            android:screenOrientation="unspecified"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:resizeableActivity="true">
 
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/settings_shortcuts" />
-
+            <!-- Launch theme/orientation are the standalone game boot screen (black,
+                 fullscreen, landscape from the first frame). GameSettingsActivity
+                 switches to Theme.Sts2ExtraSettings and portrait-on-phones whenever it
+                 is not that boot screen. Icon shortcuts are dynamic (LauncherShortcuts)
+                 so the standalone build has none. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -80,11 +82,6 @@
             android:configChanges="layoutDirection|locale|orientation|keyboardHidden|screenSize|smallestScreenSize|density|keyboard|navigation|screenLayout|uiMode"
             android:resizeableActivity="false"
             tools:ignore="UnusedAttribute" >
-
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/game_shortcuts" />
-
         </activity>
 
         <activity

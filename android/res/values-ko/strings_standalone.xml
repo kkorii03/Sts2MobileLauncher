@@ -2,4 +2,10 @@
 <resources>
 	<string name="standalone_preparing_game">게임 데이터 준비 중… %1$d%%</string>
 	<string name="standalone_starting_game">게임 시작 중…</string>
+	<string name="standalone_launch_failed">게임을 시작하지 못했습니다.\n다시 시도해 주세요.</string>
+	<string name="standalone_launch_failed_storage">저장 공간이 부족합니다.\n공간을 확보한 뒤 다시 시도해 주세요.</string>
+	<string name="standalone_retry">다시 시도</string>
+	<string name="standalone_quit">종료</string>
+	<string name="standalone_crash_message">문제가 발생해 게임을 다시 시작합니다.</string>
+	<string name="standalone_crash_ok">확인</string>
 </resources>
