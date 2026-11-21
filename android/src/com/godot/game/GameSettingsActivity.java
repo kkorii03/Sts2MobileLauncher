@@ -180,9 +180,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	 */
 	private void applyStandaloneDefaults() {
 		try {
-			repository.applyGraphicsPreset(ExtraSettingsRepository.GRAPHICS_PRESET_RECOMMENDED);
-			repository.applyDisplayPreset(ExtraSettingsRepository.DISPLAY_PRESET_ORIGINAL);
-			repository.applyOperationPreset(ExtraSettingsRepository.OPERATION_PRESET_TOUCH);
+			repository.applyStandaloneMobileDefaults();
 			ExtraSettingsPreferences.setLauncherStartupBehavior(this, ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME);
 			ExtraSettingsPreferences.setUpdateCheckEnabled(this, false);
 			ExtraSettingsPreferences.setFirstRunSetupCompleted(this, true);

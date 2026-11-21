@@ -585,6 +585,22 @@ public final class ExtraSettingsRepository {
 		applyOperationPreset(OPERATION_PRESET_TOUCH);
 	}
 
+	/**
+	 * Personal standalone build: first-run defaults tuned to feel like a native
+	 * phone game (Slay the Spire 1 mobile) rather than a PC port. Larger UI and
+	 * text, tooltips on press-and-hold instead of PC hover, no quick save/load
+	 * "Retry" button in the pause menu. Everything stays adjustable in settings.
+	 */
+	public void applyStandaloneMobileDefaults() throws Exception {
+		applyFirstRunDefaults();
+		applyDisplayPreset(DISPLAY_PRESET_MOBILE);
+		saveSetting(settings -> {
+			settings.put("mobile_tooltip_mode", TOOLTIP_MODE_LONG_PRESS);
+			settings.put("mobile_tooltip_long_press_ms", 500);
+			settings.put("quick_sl_enabled", false);
+		});
+	}
+
 	public void resetPreloadAdvancedDefaults() throws Exception {
 		saveSetting(settings -> {
 			settings.put("preload_render_warmup_enabled", false);
