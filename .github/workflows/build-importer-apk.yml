@@ -76,7 +76,11 @@ jobs:
         run: |
           KS="$RUNNER_TEMP/release.p12"
           if [[ -n "$KS_B64" ]]; then
-            echo "$KS_B64" | base64 -d > "$KS"
+            # Secrets set from Windows may carry CR/LF; strip them.
+            printf '%s' "$KS_B64" | tr -d '\r\n ' | base64 -d > "$KS"
+            KS_PASS="$(printf '%s' "$KS_PASS" | tr -d '\r\n')"
+            KS_ALIAS="$(printf '%s' "$KS_ALIAS" | tr -d '\r\n')"
+            keytool -list -keystore "$KS" -storepass "$KS_PASS" -alias "$KS_ALIAS" > /dev/null
             echo "RELEASE_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
             echo "RELEASE_KEYSTORE_ALIAS=$KS_ALIAS" >> "$GITHUB_ENV"
             echo "SIGNING=persistent" >> "$GITHUB_ENV"
