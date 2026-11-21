@@ -1198,9 +1198,26 @@ public class GodotApp extends GodotActivity {
 			Log.e("GODOT", "Unable to hard-restart to GameSettingsActivity because current GodotApp instance is null.");
 			return false;
 		}
+		if (ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME.equals(ExtraSettingsPreferences.getLauncherStartupBehavior(activity))) {
+			// Icon opens the game directly, so quitting the game closes the app
+			// like a regular mobile game instead of landing on the settings shell.
+			markExpectedCleanGameExit("quit_app");
+			activity.runOnUiThread(activity::exitAppProcess);
+			return true;
+		}
 		markExpectedCleanGameExit("restart_to_settings");
 		activity.runOnUiThread(activity::restartToSettingsAndExitProcess);
 		return true;
+	}
+
+	private void exitAppProcess() {
+		Log.i("GODOT", "[AndroidRestart] Quit from game: closing the app.");
+		try {
+			finishAndRemoveTask();
+		} catch (Exception exception) {
+			Log.e("GODOT", "[AndroidRestart] finishAndRemoveTask failed.", exception);
+		}
+		Runtime.getRuntime().exit(0);
 	}
 
 	public static boolean restartGameFromGame() {

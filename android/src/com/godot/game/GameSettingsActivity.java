@@ -75,6 +75,9 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	private boolean bundledPayloadAutoExtractCheckRunning;
 	private boolean bundledCompatPackBootstrapFinished;
 	private boolean pendingLauncherDirectLaunch;
+	private boolean standaloneSplashMode;
+	private View launchSplash;
+	private TextView launchSplashStatus;
 	private boolean pendingCompatRecommendationLaunch;
 	private boolean preLaunchLocalSnapshotCreated;
 	private boolean cleanExitMaintenanceChecked;
@@ -116,6 +119,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this)) {
 			showWelcome();
 		} else {
+			standaloneSplashMode = isLauncherDirectLaunchIntent(savedInstanceState) && payloadManager.hasBundledPayload();
 			showMainShell();
 			maybeLaunchGameFromLauncherIntent(savedInstanceState);
 		}
@@ -231,6 +235,9 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		}
 
 		setContentView(shell);
+		if (standaloneSplashMode) {
+			showLaunchSplash();
+		}
 		int savedTab = ExtraSettingsPreferences.getLastSelectedMainTab(this, R.id.nav_game);
 		if (savedTab != R.id.nav_game && savedTab != R.id.nav_mods && savedTab != R.id.nav_versions && savedTab != R.id.nav_settings && savedTab != R.id.nav_about) {
 			savedTab = R.id.nav_game;
@@ -333,19 +340,73 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		requestExtractBundledPayload();
 	}
 
-	private void maybeLaunchGameFromLauncherIntent(Bundle savedInstanceState) {
-		if (savedInstanceState != null || contentFrame == null) {
-			return;
+	private boolean isLauncherDirectLaunchIntent(Bundle savedInstanceState) {
+		if (savedInstanceState != null) {
+			return false;
 		}
 		if (!ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME.equals(ExtraSettingsPreferences.getLauncherStartupBehavior(this))) {
-			return;
+			return false;
 		}
 		Intent intent = getIntent();
-		if (intent == null || !Intent.ACTION_MAIN.equals(intent.getAction()) || !intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+		return intent != null && Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER);
+	}
+
+	private void maybeLaunchGameFromLauncherIntent(Bundle savedInstanceState) {
+		if (contentFrame == null || !isLauncherDirectLaunchIntent(savedInstanceState)) {
 			return;
 		}
 		pendingLauncherDirectLaunch = true;
 		runPendingLauncherDirectLaunch();
+	}
+
+	/**
+	 * Standalone build: cover the settings shell with a plain black screen and the
+	 * game icon while the bundled game is unpacked (first run) and the game boots,
+	 * so tapping the icon feels like opening a regular mobile game. Removed as soon
+	 * as the launch stops for any reason that needs the settings UI.
+	 */
+	private void showLaunchSplash() {
+		if (launchSplash != null) {
+			return;
+		}
+		FrameLayout splash = new FrameLayout(this);
+		splash.setBackgroundColor(Color.BLACK);
+		splash.setClickable(true);
+		LinearLayout box = ExtraSettingsUi.vertical(this);
+		box.setGravity(Gravity.CENTER_HORIZONTAL);
+		ImageView icon = new ImageView(this);
+		icon.setImageResource(R.mipmap.icon);
+		box.addView(icon, new LinearLayout.LayoutParams(ExtraSettingsUi.dp(this, 112), ExtraSettingsUi.dp(this, 112)));
+		launchSplashStatus = new TextView(this);
+		launchSplashStatus.setTextColor(Color.rgb(170, 170, 170));
+		launchSplashStatus.setTextSize(14);
+		launchSplashStatus.setGravity(Gravity.CENTER);
+		LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+		statusParams.topMargin = ExtraSettingsUi.dp(this, 20);
+		statusParams.gravity = Gravity.CENTER_HORIZONTAL;
+		box.addView(launchSplashStatus, statusParams);
+		splash.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+		addContentView(splash, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+		launchSplash = splash;
+	}
+
+	private void setLaunchSplashProgress(int percent) {
+		if (launchSplashStatus != null) {
+			launchSplashStatus.setText(getString(R.string.standalone_preparing_game, Math.max(0, Math.min(100, percent))));
+		}
+	}
+
+	private void hideLaunchSplash() {
+		standaloneSplashMode = false;
+		if (launchSplash == null) {
+			return;
+		}
+		ViewGroup parent = (ViewGroup) launchSplash.getParent();
+		if (parent != null) {
+			parent.removeView(launchSplash);
+		}
+		launchSplash = null;
+		launchSplashStatus = null;
 	}
 
 	private void runPendingLauncherDirectLaunch() {
@@ -363,6 +424,11 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			pendingLauncherDirectLaunch = false;
 			pendingCompatRecommendationLaunch = false;
 			launchGame();
+			// launchGame() either went busy (preparing, then starts GodotApp and
+			// finishes) or stopped to show a dialog/message: reveal the settings UI.
+			if (!busy) {
+				hideLaunchSplash();
+			}
 		});
 	}
 
@@ -1296,19 +1362,29 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		busy = true;
 		PayloadManager.ImportControl control = new PayloadManager.ImportControl();
 		final Thread[] workerRef = new Thread[1];
+		// Standalone first run: show progress on the black launch screen instead of a dialog.
+		boolean onSplash = bundled && launchSplash != null;
 		PayloadImportProgressDialog progressDialog = new PayloadImportProgressDialog(control, () -> {
 			Thread worker = workerRef[0];
 			if (worker != null) {
 				worker.interrupt();
 			}
 		});
-		progressDialog.show();
+		if (onSplash) {
+			setLaunchSplashProgress(0);
+		} else {
+			progressDialog.show();
+		}
+		PayloadManager.ProgressListener progress = (percent, stage) -> runOnUiThread(() -> {
+			progressDialog.setProgress(percent);
+			setLaunchSplashProgress(percent);
+		});
 
 		Thread worker = new Thread(() -> {
 			try {
 				PayloadManager.Status status = bundled
-					? payloadManager.extractBundledPayload((percent, stage) -> runOnUiThread(() -> progressDialog.setProgress(percent)), control)
-					: payloadManager.importPayloadZip(uri, (percent, stage) -> runOnUiThread(() -> progressDialog.setProgress(percent)), control);
+					? payloadManager.extractBundledPayload(progress, control)
+					: payloadManager.importPayloadZip(uri, progress, control);
 				runOnUiThread(() -> {
 					busy = false;
 					progressDialog.dismiss();
@@ -1319,6 +1395,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 				runOnUiThread(() -> {
 					busy = false;
 					progressDialog.dismiss();
+					hideLaunchSplash();
 					if (control.isCancelled() || Thread.currentThread().isInterrupted() || isImportCancelledException(exception)) {
 						showMessage(getString(R.string.status_import_game_payload_cancelled));
 					} else {
@@ -2429,6 +2506,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 
 	@Override
 	public void showError(Exception exception) {
+		hideLaunchSplash();
 		if (exception instanceof ModInstallStore.BusyException) {
 			showMessage(getString(R.string.mod_install_busy));
 			return;
