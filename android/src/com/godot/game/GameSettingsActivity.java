@@ -3,16 +3,20 @@ package com.godot.game;
 import android.animation.ObjectAnimator;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.view.WindowManager;
 import android.view.animation.LinearInterpolator;
 import android.widget.FrameLayout;
 import android.widget.EditText;
@@ -75,9 +79,16 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	private boolean bundledPayloadAutoExtractCheckRunning;
 	private boolean bundledCompatPackBootstrapFinished;
 	private boolean pendingLauncherDirectLaunch;
+	private static final String STATE_DIRECT_LAUNCH_REQUESTED = "direct_launch_requested";
+	private static final long SPLASH_SECRET_HOLD_MS = 2000L;
+	private boolean directLaunchRequested;
 	private boolean standaloneSplashMode;
+	private boolean stayInSettingsRequested;
+	private boolean splashHoldActive;
+	private boolean launchFailureShown;
 	private View launchSplash;
 	private TextView launchSplashStatus;
+	private ProgressBar launchSplashProgress;
 	private boolean pendingCompatRecommendationLaunch;
 	private boolean preLaunchLocalSnapshotCreated;
 	private boolean cleanExitMaintenanceChecked;
@@ -93,11 +104,27 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
-		super.onCreate(savedInstanceState);
-		ExtraSettingsUi.applyPhonePortraitTabletFreeOrientation(this);
-		SystemBarInsetsHelper.enableEdgeToEdge(this);
-		repository = new ExtraSettingsRepository(this);
 		payloadManager = new PayloadManager(this);
+		directLaunchRequested = isLauncherDirectLaunchIntent(savedInstanceState);
+		// Standalone build opened from the icon: stay on the black, fullscreen,
+		// landscape launch theme from the manifest so it looks like a game booting.
+		standaloneSplashMode = directLaunchRequested && payloadManager.hasBundledPayload();
+		if (!standaloneSplashMode) {
+			setTheme(R.style.Theme_Sts2ExtraSettings);
+		}
+		super.onCreate(savedInstanceState);
+		if (standaloneSplashMode) {
+			setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+		} else {
+			getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+			ExtraSettingsUi.applyPhonePortraitTabletFreeOrientation(this);
+		}
+		SystemBarInsetsHelper.enableEdgeToEdge(this);
+		if (standaloneSplashMode) {
+			SystemBarInsetsHelper.hideSystemBars(this);
+		}
+		LauncherShortcuts.update(this, payloadManager.hasBundledPayload());
+		repository = new ExtraSettingsRepository(this);
 		compatPackManager = new CompatPackManager(this);
 		gameBodyVersionManager = new GameBodyVersionManager(this);
 		launchProfileManager = new LaunchProfileManager(this);
@@ -106,7 +133,11 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			pendingPickerRequest = savedInstanceState.getInt("pending_picker_request");
 			pendingPickerResult = savedInstanceState.getParcelable("pending_picker_result");
 		}
-		ModInstallReadiness.open(this, repository::ensureAppDirectories, () -> openSettings(savedInstanceState));
+		ModInstallReadiness.open(this, repository::ensureAppDirectories, () -> openSettings(savedInstanceState), this::hideLaunchSplash);
+		if (standaloneSplashMode) {
+			// Covers the readiness page immediately; re-attached after setContentView(shell).
+			showLaunchSplash();
+		}
 	}
 
 	private void openSettings(Bundle savedInstanceState) {
@@ -117,11 +148,12 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			applyStandaloneDefaults();
 		}
 		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this)) {
+			hideLaunchSplash();
+			directLaunchRequested = false;
 			showWelcome();
 		} else {
-			standaloneSplashMode = isLauncherDirectLaunchIntent(savedInstanceState) && payloadManager.hasBundledPayload();
 			showMainShell();
-			maybeLaunchGameFromLauncherIntent(savedInstanceState);
+			maybeLaunchGameFromLauncherIntent();
 		}
 		if (pendingPickerResult != null) {
 			handlePickerResult(pendingPickerRequest, pendingPickerResult);
@@ -132,9 +164,22 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	@Override
 	protected void onSaveInstanceState(Bundle outState) {
 		super.onSaveInstanceState(outState);
+		outState.putBoolean(STATE_DIRECT_LAUNCH_REQUESTED, directLaunchRequested);
 		if (pendingPickerResult != null) {
 			outState.putInt("pending_picker_request", pendingPickerRequest);
 			outState.putParcelable("pending_picker_result", pendingPickerResult);
+		}
+	}
+
+	/**
+	 * Rotation/resize is declared in the manifest so the standalone boot splash is
+	 * never torn down mid-launch. Everywhere else rebuild like the old relaunch did.
+	 */
+	@Override
+	public void onConfigurationChanged(Configuration newConfig) {
+		super.onConfigurationChanged(newConfig);
+		if (!standaloneSplashMode && launchSplash == null) {
+			recreate();
 		}
 	}
 
@@ -179,8 +224,10 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	 * Personal standalone build (game bundled in the APK): behave like a regular
 	 * mobile game. Skip the welcome wizard with its recommended choices, open the
 	 * game straight from the app icon, and don't offer upstream APK updates (they
-	 * are signed with a different key). Settings stay reachable from the icon's
-	 * long-press "settings" shortcut. Falls back to the wizard if anything fails.
+	 * are signed with a different key). There is no visible way into these
+	 * settings: hold the game logo on the loading screen for two seconds, or
+	 * long-press the message of the crash dialog. Falls back to the wizard if
+	 * anything fails.
 	 */
 	private void applyStandaloneDefaults() {
 		try {
@@ -293,7 +340,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	}
 
 	private void maybeRunLaunchUpdateCheck() {
-		if (launchUpdateCheckRequested || !ExtraSettingsPreferences.isUpdateCheckEnabled(this)) {
+		if (launchUpdateCheckRequested || !ExtraSettingsPreferences.isUpdateCheckEnabled(this) || payloadManager.hasBundledPayload()) {
 			return;
 		}
 		launchUpdateCheckRequested = true;
@@ -342,17 +389,22 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 
 	private boolean isLauncherDirectLaunchIntent(Bundle savedInstanceState) {
 		if (savedInstanceState != null) {
-			return false;
+			// Survives a recreate (rotation, resize) that happens before the game starts.
+			return savedInstanceState.getBoolean(STATE_DIRECT_LAUNCH_REQUESTED, false);
 		}
-		if (!ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME.equals(ExtraSettingsPreferences.getLauncherStartupBehavior(this))) {
+		boolean startupGame = ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME.equals(ExtraSettingsPreferences.getLauncherStartupBehavior(this));
+		// Standalone first run: applyStandaloneDefaults() turns "open the game" on
+		// before the launch is attempted.
+		boolean standaloneFirstRun = !ExtraSettingsPreferences.isFirstRunSetupCompleted(this) && payloadManager.hasBundledPayload();
+		if (!startupGame && !standaloneFirstRun) {
 			return false;
 		}
 		Intent intent = getIntent();
 		return intent != null && Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER);
 	}
 
-	private void maybeLaunchGameFromLauncherIntent(Bundle savedInstanceState) {
-		if (contentFrame == null || !isLauncherDirectLaunchIntent(savedInstanceState)) {
+	private void maybeLaunchGameFromLauncherIntent() {
+		if (contentFrame == null || !directLaunchRequested) {
 			return;
 		}
 		pendingLauncherDirectLaunch = true;
@@ -361,12 +413,18 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 
 	/**
 	 * Standalone build: cover the settings shell with a plain black screen and the
-	 * game icon while the bundled game is unpacked (first run) and the game boots,
-	 * so tapping the icon feels like opening a regular mobile game. Removed as soon
-	 * as the launch stops for any reason that needs the settings UI.
+	 * game logo while the bundled game is unpacked (first run, with a thin progress
+	 * bar) and the game boots, so tapping the icon feels like opening a regular
+	 * mobile game. Removed as soon as the launch stops for any reason that needs
+	 * the settings UI. Holding the logo for two seconds opens the settings
+	 * instead of the game (hidden troubleshooting entry).
 	 */
 	private void showLaunchSplash() {
 		if (launchSplash != null) {
+			if (launchSplash.getParent() == null) {
+				// setContentView() replaced the content underneath; put the cover back on top.
+				addContentView(launchSplash, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+			}
 			return;
 		}
 		FrameLayout splash = new FrameLayout(this);
@@ -376,13 +434,35 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		box.setGravity(Gravity.CENTER_HORIZONTAL);
 		ImageView icon = new ImageView(this);
 		icon.setImageResource(R.mipmap.icon);
+		Runnable openSettingsSecret = this::openSettingsFromSplash;
+		icon.setOnTouchListener((view, event) -> {
+			int action = event.getActionMasked();
+			if (action == MotionEvent.ACTION_DOWN) {
+				splashHoldActive = true;
+				view.postDelayed(openSettingsSecret, SPLASH_SECRET_HOLD_MS);
+			} else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+				splashHoldActive = false;
+				view.removeCallbacks(openSettingsSecret);
+			}
+			return true;
+		});
 		box.addView(icon, new LinearLayout.LayoutParams(ExtraSettingsUi.dp(this, 112), ExtraSettingsUi.dp(this, 112)));
+		launchSplashProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+		launchSplashProgress.setMax(100);
+		launchSplashProgress.setIndeterminate(false);
+		launchSplashProgress.setProgressTintList(ColorStateList.valueOf(Color.rgb(222, 222, 222)));
+		launchSplashProgress.setProgressBackgroundTintList(ColorStateList.valueOf(Color.rgb(64, 64, 64)));
+		launchSplashProgress.setVisibility(View.GONE);
+		LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(ExtraSettingsUi.dp(this, 200), ExtraSettingsUi.dp(this, 3));
+		progressParams.topMargin = ExtraSettingsUi.dp(this, 32);
+		progressParams.gravity = Gravity.CENTER_HORIZONTAL;
+		box.addView(launchSplashProgress, progressParams);
 		launchSplashStatus = new TextView(this);
-		launchSplashStatus.setTextColor(Color.rgb(170, 170, 170));
-		launchSplashStatus.setTextSize(14);
+		launchSplashStatus.setTextColor(Color.rgb(150, 150, 150));
+		launchSplashStatus.setTextSize(13);
 		launchSplashStatus.setGravity(Gravity.CENTER);
 		LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-		statusParams.topMargin = ExtraSettingsUi.dp(this, 20);
+		statusParams.topMargin = ExtraSettingsUi.dp(this, 12);
 		statusParams.gravity = Gravity.CENTER_HORIZONTAL;
 		box.addView(launchSplashStatus, statusParams);
 		splash.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
@@ -391,13 +471,19 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	}
 
 	private void setLaunchSplashProgress(int percent) {
+		int clamped = Math.max(0, Math.min(100, percent));
+		if (launchSplashProgress != null) {
+			launchSplashProgress.setVisibility(View.VISIBLE);
+			launchSplashProgress.setProgress(clamped);
+		}
 		if (launchSplashStatus != null) {
-			launchSplashStatus.setText(getString(R.string.standalone_preparing_game, Math.max(0, Math.min(100, percent))));
+			launchSplashStatus.setText(getString(R.string.standalone_preparing_game, clamped));
 		}
 	}
 
 	private void hideLaunchSplash() {
 		standaloneSplashMode = false;
+		splashHoldActive = false;
 		if (launchSplash == null) {
 			return;
 		}
@@ -407,6 +493,79 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		}
 		launchSplash = null;
 		launchSplashStatus = null;
+		launchSplashProgress = null;
+	}
+
+	/** Hidden troubleshooting entry: stop the automatic game launch and show the settings. */
+	private void openSettingsFromSplash() {
+		if (launchSplash == null || isFinishing() || isDestroyed()) {
+			return;
+		}
+		splashHoldActive = false;
+		stayInSettingsRequested = true;
+		directLaunchRequested = false;
+		pendingLauncherDirectLaunch = false;
+		pendingCompatRecommendationLaunch = false;
+		hideLaunchSplashWhenIdle();
+	}
+
+	private void hideLaunchSplashWhenIdle() {
+		if (launchSplash == null || isFinishing() || isDestroyed()) {
+			return;
+		}
+		if (busy) {
+			// Unpacking/preparing/backing up: let it finish, then show the settings.
+			launchSplash.postDelayed(this::hideLaunchSplashWhenIdle, 300);
+			return;
+		}
+		hideLaunchSplash();
+	}
+
+	/**
+	 * Standalone launch failed while the boot splash is up: say so in plain words
+	 * like a game would, with no technical detail on screen (the exception goes to
+	 * the log). Long-pressing the message reveals the settings with the details.
+	 */
+	private void showStandaloneLaunchFailure(Exception exception) {
+		Log.e(TAG, "Standalone launch failed.", exception);
+		launchFailureShown = true;
+		directLaunchRequested = false;
+		pendingLauncherDirectLaunch = false;
+		pendingCompatRecommendationLaunch = false;
+		AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+			.setMessage(isOutOfStorage(exception) ? R.string.standalone_launch_failed_storage : R.string.standalone_launch_failed)
+			.setCancelable(false)
+			.setNegativeButton(R.string.standalone_quit, (d, which) -> finishAndRemoveTask())
+			.setPositiveButton(R.string.standalone_retry, (d, which) -> restartStandaloneLaunch())
+			.show();
+		TextView message = dialog.findViewById(android.R.id.message);
+		if (message != null) {
+			message.setOnLongClickListener(v -> {
+				dialog.dismiss();
+				hideLaunchSplash();
+				showError(exception);
+				return true;
+			});
+		}
+	}
+
+	private void restartStandaloneLaunch() {
+		Intent intent = new Intent(this, GameSettingsActivity.class)
+			.setAction(Intent.ACTION_MAIN)
+			.addCategory(Intent.CATEGORY_LAUNCHER)
+			.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+		startActivity(intent);
+		finish();
+	}
+
+	private static boolean isOutOfStorage(Throwable throwable) {
+		for (Throwable current = throwable; current != null; current = current.getCause() == current ? null : current.getCause()) {
+			String message = current.getMessage();
+			if (message != null && (message.contains("ENOSPC") || message.toLowerCase(java.util.Locale.ROOT).contains("no space left"))) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void runPendingLauncherDirectLaunch() {
@@ -426,7 +585,8 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			launchGame();
 			// launchGame() either went busy (preparing, then starts GodotApp and
 			// finishes) or stopped to show a dialog/message: reveal the settings UI.
-			if (!busy) {
+			if (!busy && !launchFailureShown) {
+				directLaunchRequested = false;
 				hideLaunchSplash();
 			}
 		});
@@ -1388,9 +1548,15 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 				runOnUiThread(() -> {
 					busy = false;
 					progressDialog.dismiss();
+					if (launchSplashProgress != null) {
+						launchSplashProgress.setVisibility(View.GONE);
+					}
 					if (launchSplashStatus != null) {
 						// Import done; launch preparation follows with no percentage to report.
 						launchSplashStatus.setText(R.string.standalone_starting_game);
+					}
+					if (stayInSettingsRequested) {
+						hideLaunchSplash();
 					}
 					refreshCurrentScreen();
 					showMessage(getString(R.string.status_import_game_payload_done, status.shortVersionLabel()));
@@ -1399,10 +1565,11 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 				runOnUiThread(() -> {
 					busy = false;
 					progressDialog.dismiss();
-					hideLaunchSplash();
 					if (control.isCancelled() || Thread.currentThread().isInterrupted() || isImportCancelledException(exception)) {
+						hideLaunchSplash();
 						showMessage(getString(R.string.status_import_game_payload_cancelled));
 					} else {
+						// On the standalone boot splash this is a plain retry/quit dialog (see showError).
 						showError(exception);
 					}
 				});
@@ -1999,9 +2166,13 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			return;
 		}
 		busy = true;
+		// Standalone boot splash: back up / sync quietly instead of popping a dialog over the logo.
+		boolean silent = launchSplash != null;
 		String initialMessage = getString(R.string.status_busy_create_local_save_snapshot);
 		SteamOperationProgressDialog progressDialog = new SteamOperationProgressDialog(this, getString(R.string.cloud_operation_progress_title), initialMessage);
-		progressDialog.show();
+		if (!silent) {
+			progressDialog.show();
+		}
 		new Thread(() -> {
 			List<String> results = new ArrayList<>();
 			try {
@@ -2026,7 +2197,11 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 				runOnUiThreadIfActive(() -> {
 					busy = false;
 					progressDialog.dismiss();
-					showError(exception);
+					if (silent) {
+						Log.w(TAG, "Clean-exit save maintenance failed during standalone boot.", exception);
+					} else {
+						showError(exception);
+					}
 				});
 			}
 		}, "sts2-clean-exit-save-maintenance").start();
@@ -2176,23 +2351,49 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		cancelLaunchPreparation = ModInstallReadiness.run(this, () -> {
 			createPreLaunchLocalSaveSnapshotIfNeeded();
 			preparation.prepareForLaunch();
-		}, () -> Snackbar.make(findViewById(android.R.id.content), R.string.mod_install_waiting, Snackbar.LENGTH_INDEFINITE)
-			.setAction(android.R.string.cancel, v -> {
-				if (cancelLaunchPreparation != null) cancelLaunchPreparation.run();
-				cancelLaunchPreparation = null;
-				busy = false;
-			}).show(), () -> {
+		}, () -> {
+			if (launchSplash != null) {
+				return; // Standalone boot splash: just keep waiting, no technical notice.
+			}
+			Snackbar.make(findViewById(android.R.id.content), R.string.mod_install_waiting, Snackbar.LENGTH_INDEFINITE)
+				.setAction(android.R.string.cancel, v -> {
+					if (cancelLaunchPreparation != null) cancelLaunchPreparation.run();
+					cancelLaunchPreparation = null;
+					busy = false;
+				}).show();
+		}, () -> {
 			cancelLaunchPreparation = null;
-			busy = false;
-			Intent intent = GodotApp.createLaunchIntent(this, true);
-			intent.putExtra("launch_prepared", true);
-			startActivity(intent);
-			finish();
+			startPreparedGame();
 		}, exception -> {
 			cancelLaunchPreparation = null;
 			busy = false;
 			showError(exception);
 		});
+	}
+
+	private void startPreparedGame() {
+		if (isFinishing() || isDestroyed()) {
+			busy = false;
+			return;
+		}
+		if (splashHoldActive) {
+			// The logo is being held (hidden settings gesture): wait for it to resolve.
+			getWindow().getDecorView().postDelayed(this::startPreparedGame, 250);
+			return;
+		}
+		busy = false;
+		if (stayInSettingsRequested) {
+			hideLaunchSplash();
+			return;
+		}
+		Intent intent = GodotApp.createLaunchIntent(this, true);
+		intent.putExtra("launch_prepared", true);
+		startActivity(intent);
+		if (launchSplash != null) {
+			// Black boot splash hands over to the game without a slide/fade animation.
+			overridePendingTransition(0, 0);
+		}
+		finish();
 	}
 
 	private void installBundledCompatPacksInBackground(boolean showResult) {
@@ -2505,11 +2706,20 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		if (message == null || message.trim().isEmpty() || isSilentSettingsSavedMessage(message)) {
 			return;
 		}
+		if (launchSplash != null) {
+			// Standalone boot splash: a game shows no status toasts while loading.
+			Log.i(TAG, "Status (hidden behind boot splash): " + message);
+			return;
+		}
 		showSnackbar(message, Snackbar.LENGTH_SHORT);
 	}
 
 	@Override
 	public void showError(Exception exception) {
+		if (launchSplash != null && !isFinishing() && !isDestroyed()) {
+			showStandaloneLaunchFailure(exception);
+			return;
+		}
 		hideLaunchSplash();
 		if (exception instanceof ModInstallStore.BusyException) {
 			showMessage(getString(R.string.mod_install_busy));

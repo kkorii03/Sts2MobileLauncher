@@ -20,8 +20,11 @@ public class Sts2Application extends Application {
 		AndroidRuntimeEnvironment.configure(this, "Sts2Application");
 		Sts2LogcatCollector.start(this);
 
+		// Standalone build: a crash while the game is in the background stays silent
+		// (no notice popping up over other apps); the report is still in logcat.
+		boolean standalone = new PayloadManager(this).hasBundledPayload();
 		CaocConfig.Builder.create()
-			.backgroundMode(CaocConfig.BACKGROUND_MODE_SHOW_CUSTOM)
+			.backgroundMode(standalone ? CaocConfig.BACKGROUND_MODE_SILENT : CaocConfig.BACKGROUND_MODE_SHOW_CUSTOM)
 			.enabled(true)
 			.showErrorDetails(true)
 			.showRestartButton(true)

@@ -34,6 +34,11 @@ final class ModInstallReadiness {
 	}
 
 	static void open(AppCompatActivity owner, Work attempt, Runnable onReady) {
+		open(owner, attempt, onReady, null);
+	}
+
+	/** {@code onFailureShown} runs after the error and retry button become visible (e.g. to lift a cover). */
+	static void open(AppCompatActivity owner, Work attempt, Runnable onReady, Runnable onFailureShown) {
 		owner.runOnUiThread(() -> {
 			if (unavailable(owner)) return;
 			ScrollView scroll = new ScrollView(owner);
@@ -68,6 +73,7 @@ final class ModInstallReadiness {
 					if (detail == null || detail.isEmpty()) detail = error.toString();
 					status.setText(owner.getString(R.string.error_operation_failed) + ": " + detail);
 					retry.setVisibility(View.VISIBLE);
+					if (onFailureShown != null) onFailureShown.run();
 				});
 			};
 			retry.setOnClickListener(v -> { if (v.getVisibility() == View.VISIBLE) check.run(); });

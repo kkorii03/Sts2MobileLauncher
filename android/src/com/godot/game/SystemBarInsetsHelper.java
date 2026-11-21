@@ -51,6 +51,17 @@ public final class SystemBarInsetsHelper {
 		controller.setAppearanceLightNavigationBars(false);
 	}
 
+	/** Game-style immersive: bars hidden, a swipe shows them briefly. */
+	public static void hideSystemBars(Activity activity) {
+		Window window = activity == null ? null : activity.getWindow();
+		if (window == null) {
+			return;
+		}
+		WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
+		controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+		controller.hide(WindowInsetsCompat.Type.systemBars());
+	}
+
 	/**
 	 * Apply system bar + display cutout insets as extra padding on selected sides.
 	 * Base padding is captured once from the view's current padding when first installed.
