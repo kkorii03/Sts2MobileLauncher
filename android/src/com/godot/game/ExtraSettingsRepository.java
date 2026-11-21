@@ -599,6 +599,9 @@ public final class ExtraSettingsRepository {
 			settings.put("mobile_tooltip_long_press_ms", 500);
 			settings.put("quick_sl_enabled", false);
 		});
+		// The game targets 60 fps; on 120 Hz panels this gives steadier frame
+		// pacing and less heat (upstream issue #94: 29-38 ms -> ~16.7 ms frames).
+		saveDisplayRefreshRateMode(DISPLAY_REFRESH_RATE_60HZ);
 	}
 
 	public void resetPreloadAdvancedDefaults() throws Exception {
