@@ -40,10 +40,12 @@ import org.fmod.FMOD;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowManager;
 
 import org.json.JSONObject;
 
@@ -175,6 +177,7 @@ public class GodotApp extends GodotActivity {
 		StartupHealthTracker.markGameLaunchStarted(this);
 		applyConfiguredScreenOrientation();
 		EdgeToEdge.enable(this);
+		allowDrawingIntoDisplayCutout();
 		boolean audioCompatibilityMode = false;
 		try {
 			audioCompatibilityMode = new ExtraSettingsRepository(this).loadSettingsJson()
@@ -189,6 +192,19 @@ public class GodotApp extends GodotActivity {
 			Log.w(TAG, "FMOD init failed; continuing so launcher diagnostics remain available.", throwable);
 		}
 		logGodotAppLaunchSnapshot("onCreate_before_super");
+	}
+
+	// Android 15+ (targetSdk 35) already treats DEFAULT as ALWAYS; do the same on 9-14 so the
+	// landscape punch-hole edge is not letterboxed. Leaves any explicit mode untouched.
+	private void allowDrawingIntoDisplayCutout() {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || getWindow() == null) {
+			return;
+		}
+		WindowManager.LayoutParams attributes = getWindow().getAttributes();
+		if (attributes.layoutInDisplayCutoutMode == WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT) {
+			attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+			getWindow().setAttributes(attributes);
+		}
 	}
 
 	private void redirectBeforeGodot(Intent target) {
@@ -1038,6 +1054,10 @@ public class GodotApp extends GodotActivity {
 		}
 		highRefreshRateController.onWindowFocusChanged(this, getGodot(), hasFocus);
 		if (hasFocus) {
+			// Pulling down the notification shade only costs window focus (no onPause/onResume),
+			// and some ROMs leave the system bars visible afterwards; the resulting status-bar
+			// inset shows up as a black bar at the top. Re-hide the bars on focus regain.
+			updateWindowAppearance.run();
 			requestDisplayRefreshRate("onWindowFocusChanged");
 		}
 		if (floatingMouseInputController != null) {
