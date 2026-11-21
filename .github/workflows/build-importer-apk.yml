@@ -24,14 +24,17 @@ jobs:
       DL: ${{ github.workspace }}/../ci-downloads
       REF: ${{ github.workspace }}/../ci-runtime-reference
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+
+      # Caches Gradle dependencies between runs (Maven Central rate-limits CI with 429).
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Android SDK packages
         run: |
@@ -89,6 +92,15 @@ jobs:
           fi
           echo "RELEASE_KEYSTORE_FILE=$KS" >> "$GITHUB_ENV"
 
+      - name: Resolve Gradle dependencies (with retries)
+        run: |
+          for i in 1 2 3 4; do
+            (cd android && ./gradlew --no-daemon -q buildEnvironment > /dev/null) && exit 0
+            echo "::warning::dependency resolution attempt $i failed; retrying in $((i*45))s"
+            sleep $((i*45))
+          done
+          exit 1
+
       - name: Build importer APK
         run: |
           export JAVA_HOME ANDROID_HOME
@@ -97,7 +109,12 @@ jobs:
           export STS2_FMOD_ANDROID_LIBS_DIR="$REF/fmod/arm64"
           export STS2_CRYPTO_NATIVE_JAR="$REF/libSystem.Security.Cryptography.Native.Android.jar"
           export STS2_PREBUILT_COMPAT_APK="$DL/official.apk"
-          bash tools/package/build_importer_apk.sh
+          for i in 1 2 3; do
+            bash tools/package/build_importer_apk.sh && exit 0
+            echo "::warning::build attempt $i failed; retrying in $((i*60))s (transient Maven 429s)"
+            sleep $((i*60))
+          done
+          exit 1
 
       - name: Inspect APK
         run: |
