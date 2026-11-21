@@ -9,7 +9,9 @@ name: Build importer APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # main = regular builds (kkorii03); exp/** = parallel experiment builds,
+    # usually pushed to the kkorii12-bot fork.
+    branches: [main, 'exp/**']
     paths-ignore: ['**.md', 'doc/**']
 
 concurrency:
