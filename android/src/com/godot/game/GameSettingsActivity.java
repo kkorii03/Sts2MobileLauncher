@@ -1388,6 +1388,10 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 				runOnUiThread(() -> {
 					busy = false;
 					progressDialog.dismiss();
+					if (launchSplashStatus != null) {
+						// Import done; launch preparation follows with no percentage to report.
+						launchSplashStatus.setText(R.string.standalone_starting_game);
+					}
 					refreshCurrentScreen();
 					showMessage(getString(R.string.status_import_game_payload_done, status.shortVersionLabel()));
 				});
