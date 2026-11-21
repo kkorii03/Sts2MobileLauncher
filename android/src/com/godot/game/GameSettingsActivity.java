@@ -110,6 +110,9 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		directoriesReady = true;
 		SteamWorkshopDownloadCleaner.maybeRunDailyCleanup(this);
 		installBundledCompatPacksInBackground(false);
+		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this) && payloadManager.hasBundledPayload()) {
+			applyStandaloneDefaults();
+		}
 		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this)) {
 			showWelcome();
 		} else {
@@ -166,6 +169,26 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 				.setPositiveButton(android.R.string.ok, null).show();
 		}
 		modImportNotices.clear();
+	}
+
+	/**
+	 * Personal standalone build (game bundled in the APK): behave like a regular
+	 * mobile game. Skip the welcome wizard with its recommended choices, open the
+	 * game straight from the app icon, and don't offer upstream APK updates (they
+	 * are signed with a different key). Settings stay reachable from the icon's
+	 * long-press "settings" shortcut. Falls back to the wizard if anything fails.
+	 */
+	private void applyStandaloneDefaults() {
+		try {
+			repository.applyGraphicsPreset(ExtraSettingsRepository.GRAPHICS_PRESET_RECOMMENDED);
+			repository.applyDisplayPreset(ExtraSettingsRepository.DISPLAY_PRESET_ORIGINAL);
+			repository.applyOperationPreset(ExtraSettingsRepository.OPERATION_PRESET_TOUCH);
+			ExtraSettingsPreferences.setLauncherStartupBehavior(this, ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME);
+			ExtraSettingsPreferences.setUpdateCheckEnabled(this, false);
+			ExtraSettingsPreferences.setFirstRunSetupCompleted(this, true);
+		} catch (Exception exception) {
+			Log.w(TAG, "Standalone defaults failed; showing the welcome wizard.", exception);
+		}
 	}
 
 	private void showWelcome() {
