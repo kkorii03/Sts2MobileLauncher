@@ -282,6 +282,11 @@ public final class Sts2SteamCloudSyncManager {
 			if (isSameCloudContent(local, remote)) {
 				continue;
 			}
+			if (!force && remote.size == 0L && local != null && local.size > 0L) {
+				// Never let an empty cloud file silently replace a non-empty local save.
+				conflicts.add(remote.localRelativePath);
+				continue;
+			}
 			JSONObject base = baselineByLocal.get(key);
 			boolean localChanged = local != null && (base == null || !local.sha1.equalsIgnoreCase(base.optString("local_sha1", "")));
 			boolean remoteChanged;
@@ -386,6 +391,14 @@ public final class Sts2SteamCloudSyncManager {
 			RemoteEntry remote = remoteByLocal.get(key);
 			JSONObject base = baselineByLocal.get(key);
 			if (isSameCloudContent(local, remote)) {
+				continue;
+			}
+			if (!force && local.size == 0L) {
+				// An empty local file (e.g. a save cut off mid-write) is never uploaded
+				// automatically; over existing cloud data it needs an explicit choice.
+				if (remote != null && remote.size != 0L) {
+					conflicts.add(local.localRelativePath);
+				}
 				continue;
 			}
 			boolean localChanged = base == null || !local.sha1.equalsIgnoreCase(base.optString("local_sha1", ""));
@@ -672,8 +685,22 @@ public final class Sts2SteamCloudSyncManager {
 
 	private static void copyFile(File source, File target) throws Exception {
 		ensureDirectory(target.getParentFile());
-		try (InputStream input = new BufferedInputStream(new FileInputStream(source)); OutputStream output = new BufferedOutputStream(new FileOutputStream(target))) {
-			copy(input, output);
+		// Write-then-rename: an interrupted pull never leaves a half-written save behind.
+		File temporary = new File(target.getParentFile(), "." + target.getName() + "." + System.nanoTime() + ".part");
+		try {
+			try (InputStream input = new BufferedInputStream(new FileInputStream(source)); FileOutputStream fileOutput = new FileOutputStream(temporary)) {
+				OutputStream output = new BufferedOutputStream(fileOutput);
+				copy(input, output);
+				output.flush();
+				fileOutput.getFD().sync();
+			}
+			if (!temporary.renameTo(target)) {
+				throw new IOException("Unable to replace " + target.getAbsolutePath());
+			}
+		} finally {
+			if (temporary.exists()) {
+				temporary.delete();
+			}
 		}
 	}
 

@@ -700,9 +700,50 @@ public final class ExtraSettingsRepository {
 
 	public void importSaveZip(Uri inputUri) throws Exception {
 		File saveRoot = getAccountRootDir();
-		deleteRecursively(saveRoot);
-		ensureDirectory(saveRoot);
-		unzipIntoDirectory(inputUri, saveRoot);
+		// Unpack next to (not inside) files/default: LaunchProfileManager picks the first
+		// directory under default/ as the account root, so a leftover there would hijack it.
+		String suffix = UUID.randomUUID().toString();
+		File staging = new File(context.getFilesDir(), ".save-import-staging-" + suffix);
+		File rollback = new File(context.getFilesDir(), ".save-import-rollback-" + suffix);
+		try {
+			unzipIntoDirectory(inputUri, staging);
+			if (!directoryContainsFile(staging)) {
+				throw new IOException("The selected archive contains no save files; current saves were kept.");
+			}
+			// Keep a restorable copy of the current saves (Settings > local save snapshots).
+			new LocalSaveSnapshotManager(context).createSafetySnapshot("before-import");
+			ensureDirectory(saveRoot.getParentFile());
+			boolean hadSaves = saveRoot.exists();
+			if (hadSaves && !saveRoot.renameTo(rollback)) {
+				throw new IOException("Unable to move current saves aside: " + saveRoot.getAbsolutePath());
+			}
+			if (!staging.renameTo(saveRoot)) {
+				if (hadSaves && !rollback.renameTo(saveRoot)) {
+					throw new IOException("Unable to install imported saves; previous saves remain at " + rollback.getAbsolutePath());
+				}
+				throw new IOException("Unable to install imported saves: " + saveRoot.getAbsolutePath());
+			}
+			try {
+				deleteRecursively(rollback);
+			} catch (RuntimeException ignored) {
+				// Import succeeded; a leftover copy of the old saves is harmless.
+			}
+		} finally {
+			deleteRecursively(staging);
+		}
+	}
+
+	private static boolean directoryContainsFile(File directory) {
+		File[] children = directory.listFiles();
+		if (children == null) {
+			return false;
+		}
+		for (File child : children) {
+			if (child.isFile() || (child.isDirectory() && directoryContainsFile(child))) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public void exportFullDataBackupZip(Uri outputUri) throws Exception {
@@ -3079,9 +3120,22 @@ public final class ExtraSettingsRepository {
 		if (parent != null) {
 			ensureDirectory(parent);
 		}
-		try (OutputStream outputStream = new BufferedOutputStream(new FileOutputStream(file))) {
-			outputStream.write(content.getBytes(StandardCharsets.UTF_8));
-			outputStream.flush();
+		// Write-then-rename so a crash or full disk never leaves settings.save truncated.
+		File temporary = new File(parent, "." + file.getName() + "." + System.nanoTime() + ".tmp");
+		try {
+			try (FileOutputStream fileStream = new FileOutputStream(temporary);
+				 OutputStream outputStream = new BufferedOutputStream(fileStream)) {
+				outputStream.write(content.getBytes(StandardCharsets.UTF_8));
+				outputStream.flush();
+				fileStream.getFD().sync();
+			}
+			if (!temporary.renameTo(file)) {
+				throw new IOException("Unable to replace " + file.getAbsolutePath());
+			}
+		} finally {
+			if (temporary.exists()) {
+				temporary.delete();
+			}
 		}
 	}
 
