@@ -16,8 +16,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.HashSet;
@@ -54,6 +56,11 @@ public final class LocalSaveSnapshotManager {
 
 	public Snapshot createManualSnapshot() throws Exception {
 		return createSnapshot("manual", true);
+	}
+
+	/** Safety copy before a destructive operation; never deduplicated or rotated out by launches. */
+	public Snapshot createSafetySnapshot(String reason) throws Exception {
+		return createSnapshot(reason, false);
 	}
 
 	public Snapshot restoreSnapshot(String snapshotId) throws Exception {
@@ -142,13 +149,22 @@ public final class LocalSaveSnapshotManager {
 			return null;
 		}
 		String normalizedReason = sanitizeReason(reason);
+		String contentHash = computeContentHash(accountRoot);
+		if (isAutoRotatingReason(normalizedReason)) {
+			// Unchanged saves are already preserved. Skipping keeps repeated launches (e.g. a
+			// crash loop on a damaged save) from rotating the older good copies out.
+			List<Snapshot> existing = listSnapshots();
+			if (!existing.isEmpty() && contentHash.equals(existing.get(0).contentHash)) {
+				return null;
+			}
+		}
 		long createdAtMs = System.currentTimeMillis();
 		String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date(createdAtMs));
 		File snapshotFile = FileBrowserSupport.buildUniqueChild(getSnapshotRootDir(), timestamp + "-" + normalizedReason + ".zip");
 		File temporary = File.createTempFile(".snapshot-", ".part", snapshotFile.getParentFile());
 		try {
 			try (ZipOutputStream output = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(temporary)))) {
-				writeMetadata(output, createdAtMs, normalizedReason, accountRoot);
+				writeMetadata(output, createdAtMs, normalizedReason, accountRoot, contentHash);
 				zipDirectoryRecursive(accountRoot, accountRoot, output);
 			}
 			readSnapshotMetadata(temporary);
@@ -165,14 +181,53 @@ public final class LocalSaveSnapshotManager {
 	}
 
 	private void pruneSnapshots() {
-		List<Snapshot> snapshots = listSnapshots();
+		// Launch/exit snapshots rotate among themselves so they never push out manual
+		// or pre-restore/pre-import safety copies.
 		int retention = getRetentionLimit();
-		for (int i = retention; i < snapshots.size(); i++) {
-			File file = new File(getSnapshotRootDir(), snapshots.get(i).id);
+		int automaticKept = 0;
+		int otherKept = 0;
+		for (Snapshot snapshot : listSnapshots()) {
+			int kept = isAutoRotatingReason(snapshot.reason) ? automaticKept++ : otherKept++;
+			if (kept < retention) {
+				continue;
+			}
+			File file = new File(getSnapshotRootDir(), snapshot.id);
 			if (file.isFile()) {
 				file.delete();
 			}
 		}
+	}
+
+	private static boolean isAutoRotatingReason(String reason) {
+		return "before-launch".equals(reason) || "clean-exit".equals(reason);
+	}
+
+	private String computeContentHash(File root) throws Exception {
+		JSONArray paths = new JSONArray();
+		collectRelativePaths(root, root, paths);
+		List<String> sorted = new ArrayList<>();
+		for (int i = 0; i < paths.length(); i++) {
+			sorted.add(paths.getString(i));
+		}
+		Collections.sort(sorted);
+		MessageDigest digest = MessageDigest.getInstance("SHA-256");
+		byte[] buffer = new byte[8192];
+		for (String path : sorted) {
+			digest.update(path.getBytes(StandardCharsets.UTF_8));
+			digest.update((byte) 0);
+			try (InputStream input = new BufferedInputStream(new FileInputStream(new File(root, path)))) {
+				int read;
+				while ((read = input.read(buffer)) != -1) {
+					digest.update(buffer, 0, read);
+				}
+			}
+			digest.update((byte) 0);
+		}
+		StringBuilder hex = new StringBuilder();
+		for (byte value : digest.digest()) {
+			hex.append(Character.forDigit((value >> 4) & 0xf, 16)).append(Character.forDigit(value & 0xf, 16));
+		}
+		return hex.toString();
 	}
 
 
@@ -187,7 +242,8 @@ public final class LocalSaveSnapshotManager {
 		String profileId = metadata.optString("profile_id", getProfileId());
 		String accountRoot = metadata.optString("account_root", getAccountRootDir().getAbsolutePath());
 		int fileCount = metadata.optInt("file_count", -1);
-		return new Snapshot(id, reason, createdAtMs, file.length(), fileCount, profileId, accountRoot);
+		String contentHash = metadata.optString("content_sha256", "");
+		return new Snapshot(id, reason, createdAtMs, file.length(), fileCount, profileId, accountRoot, contentHash);
 	}
 
 	private JSONObject readSnapshotMetadata(File file) throws Exception {
@@ -266,12 +322,13 @@ public final class LocalSaveSnapshotManager {
 		}
 	}
 
-	private void writeMetadata(ZipOutputStream output, long createdAtMs, String reason, File accountRoot) throws Exception {
+	private void writeMetadata(ZipOutputStream output, long createdAtMs, String reason, File accountRoot, String contentHash) throws Exception {
 		JSONObject root = new JSONObject();
 		root.put("schema", 1);
 		root.put("type", "sts2_local_save_snapshot");
 		root.put("created_at_ms", createdAtMs);
 		root.put("reason", reason);
+		root.put("content_sha256", contentHash);
 		root.put("profile_id", getProfileId());
 		root.put("account_root", accountRoot.getAbsolutePath());
 		root.put("retention_limit", getRetentionLimit());
@@ -486,8 +543,10 @@ public final class LocalSaveSnapshotManager {
 		public final int fileCount;
 		public final String profileId;
 		public final String accountRoot;
+		/** SHA-256 over the saved paths and bytes; empty for snapshots made before it was recorded. */
+		public final String contentHash;
 
-		Snapshot(String id, String reason, long createdAtMs, long sizeBytes, int fileCount, String profileId, String accountRoot) {
+		Snapshot(String id, String reason, long createdAtMs, long sizeBytes, int fileCount, String profileId, String accountRoot, String contentHash) {
 			this.id = id == null ? "" : id;
 			this.reason = reason == null ? "" : reason;
 			this.createdAtMs = createdAtMs;
@@ -495,6 +554,7 @@ public final class LocalSaveSnapshotManager {
 			this.fileCount = fileCount;
 			this.profileId = profileId == null ? "" : profileId;
 			this.accountRoot = accountRoot == null ? "" : accountRoot;
+			this.contentHash = contentHash == null ? "" : contentHash;
 		}
 	}
 }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 6-11 auto backup. Only the shared game saves (files/default) are
+  backed up; the multi-GB game payload, runtime, mods, caches and launcher
+  state are left out (they are recreated from the APK on reinstall).
+-->
+<full-backup-content>
+    <include domain="file" path="default" />
+</full-backup-content>
