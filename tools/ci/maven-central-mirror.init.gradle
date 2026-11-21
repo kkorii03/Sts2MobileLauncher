@@ -1,0 +1,15 @@
+// CI only: Maven Central rate-limits shared GitHub runner IPs (HTTP 429).
+// Point mavenCentral() at Google's official Maven Central mirror instead.
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def redirect = { RepositoryHandler repos ->
+    repos.withType(MavenArtifactRepository).configureEach { repo ->
+        if (repo.url.toString().startsWith('https://repo.maven.apache.org/maven2')) {
+            repo.url = mirror
+        }
+    }
+}
+beforeSettings { settings -> redirect(settings.pluginManagement.repositories) }
+allprojects { project ->
+    redirect(project.buildscript.repositories)
+    redirect(project.repositories)
+}

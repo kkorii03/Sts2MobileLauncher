@@ -97,7 +97,10 @@ jobs:
           echo "RELEASE_KEYSTORE_FILE=$KS" >> "$GITHUB_ENV"
 
       - name: Resolve Gradle dependencies (with retries)
+        timeout-minutes: 15
         run: |
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+          cp tools/ci/maven-central-mirror.init.gradle "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d/"
           for i in 1 2 3 4; do
             (cd android && ./gradlew --no-daemon -q buildEnvironment > /dev/null) && exit 0
             echo "::warning::dependency resolution attempt $i failed; retrying in $((i*45))s"
