@@ -47,10 +47,16 @@ declare -A FMOD_20306_SHA256=(
   [libfmodstudio.so]=3b832388b360f29f543652cfa786cd9dde00d1e1960678c999253f7fddfed9f8
   [libGodotFmod.android.template_release.arm64.so]=4e5c2529134ed8424a2958e2ed3825a0383ec9b33ffb853778eddd0174ea68fc
 )
+# Fork (CI): the Godot bridge byte-identical to the one shipped inside the
+# official v0.1.13 importer APK, used when the runtime is harvested from it.
+FMOD_BRIDGE_SHIPPED_V0113_SHA256=63c1455ca51f25b342bf808e41450e92091038d72560829b57f99a217b6013e9
 for name in libfmod.so libfmodstudio.so libGodotFmod.android.template_release.arm64.so; do
   sts2_require_file "$FMOD_ANDROID_LIBS_DIR/$name" "FMOD 2.03.06 $name"
   actual_sha256="$(sha256sum "$FMOD_ANDROID_LIBS_DIR/$name")"
   actual_sha256="${actual_sha256%% *}"
+  if [[ "$name" == libGodotFmod.android.template_release.arm64.so && "$actual_sha256" == "$FMOD_BRIDGE_SHIPPED_V0113_SHA256" ]]; then
+    continue
+  fi
   if [[ "$actual_sha256" != "${FMOD_20306_SHA256[$name]}" ]]; then
     echo "Unsupported FMOD Android $name ($actual_sha256); expected the matched 2.03.06 runtime" >&2
     exit 1

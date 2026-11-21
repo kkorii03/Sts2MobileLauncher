@@ -1,0 +1,114 @@
+name: Build importer APK
+
+# Builds the importer APK (no game files) entirely from public inputs.
+# Signing: set repository secrets STS2_KEYSTORE_BASE64 / STS2_KEYSTORE_PASSWORD /
+# STS2_KEY_ALIAS to keep one signing identity across builds (needed for
+# in-place updates). Without them a throwaway key is generated and the APK
+# cannot update an install signed by another key.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'doc/**']
+
+concurrency:
+  group: build-importer-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DL: ${{ github.workspace }}/../ci-downloads
+      REF: ${{ github.workspace }}/../ci-runtime-reference
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" "ndk;28.1.13356709" "cmake;3.22.1" > /dev/null
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" "$ANDROID_HOME/ndk"
+
+      - name: Cache public inputs
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DL }}
+          key: public-inputs-v1-sts2re0.1.13-ekyso0.2.0-godot4.5.1-fmodgd6.1.0
+
+      - name: Download public inputs
+        run: |
+          mkdir -p "$DL"; cd "$DL"
+          fetch() { [[ -f "$1" ]] || curl -fL --retry 3 -sS -o "$1" "$2"; }
+          fetch official.apk https://github.com/ModinMobileSTS/Sts2MobileLauncher/releases/download/v0.1.13/sts2-re-v0.1.13-importer.apk
+          fetch ekyso.apk https://github.com/Ekyso/StS2-Launcher/releases/download/0.2.0/StS2Launcher-v0.2.0.apk
+          fetch templates.tpz https://github.com/godotengine/godot/releases/download/4.5.1-stable/Godot_v4.5.1-stable_mono_export_templates.tpz
+          fetch fmod-addons.zip https://github.com/utopia-rise/fmod-gdextension/releases/download/6.1.0-4.5.0/addons.zip
+          fetch crypto.jar https://raw.githubusercontent.com/godotengine/godot/4.5.1-stable/modules/mono/thirdparty/libSystem.Security.Cryptography.Native.Android.jar
+          sha256sum -c <<'EOF'
+          b3452741c193a2a318a1c799e421471a6ee07e431b3795937d1759cb387bb7e3  official.apk
+          6dddbd6716c3830ec802e2672be2402bd06d4270dcf1bcd72c27e46ca05acf41  ekyso.apk
+          c425633061bb49f4390bdcece2b9ce68b3b0be3c71095b40644d8f6f17b1146e  templates.tpz
+          EOF
+          sha256sum fmod-addons.zip crypto.jar
+
+      - name: Assemble runtime reference
+        run: bash tools/ci/prepare-public-runtime-reference.sh "$DL" "$REF"
+
+      - name: Signing key
+        env:
+          KS_B64: ${{ secrets.STS2_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.STS2_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.STS2_KEY_ALIAS }}
+        run: |
+          KS="$RUNNER_TEMP/release.p12"
+          if [[ -n "$KS_B64" ]]; then
+            echo "$KS_B64" | base64 -d > "$KS"
+            echo "RELEASE_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_ALIAS=$KS_ALIAS" >> "$GITHUB_ENV"
+            echo "SIGNING=persistent" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing secrets; using a throwaway key (APK cannot update other builds)."
+            PASS="$(openssl rand -hex 16)"
+            echo "::add-mask::$PASS"
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 -storepass "$PASS" \
+              -alias ci -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=CI throwaway" > /dev/null
+            echo "RELEASE_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_ALIAS=ci" >> "$GITHUB_ENV"
+            echo "SIGNING=throwaway" >> "$GITHUB_ENV"
+          fi
+          echo "RELEASE_KEYSTORE_FILE=$KS" >> "$GITHUB_ENV"
+
+      - name: Build importer APK
+        run: |
+          export JAVA_HOME ANDROID_HOME
+          export STS2_ANDROID_RUNTIME_REFERENCE_ROOT="$REF/android"
+          export STS2_FMOD_PLUGIN_AAR="$REF/fmod/fmod-release.aar"
+          export STS2_FMOD_ANDROID_LIBS_DIR="$REF/fmod/arm64"
+          export STS2_CRYPTO_NATIVE_JAR="$REF/libSystem.Security.Cryptography.Native.Android.jar"
+          export STS2_PREBUILT_COMPAT_APK="$DL/official.apk"
+          bash tools/package/build_importer_apk.sh
+
+      - name: Inspect APK
+        run: |
+          APK=dist/sts2-re-importer.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" | head -n 5
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | head -n 3
+          unzip -l "$APK" | grep -E 'lib/arm64-v8a/|compat_packs/' || true
+          mv "$APK" "dist/sts2-re-importer-${SIGNING}-${GITHUB_SHA::7}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sts2-re-importer-${{ env.SIGNING }}-${{ github.run_number }}
+          path: dist/*.apk
+          retention-days: 14

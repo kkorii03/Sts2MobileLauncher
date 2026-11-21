@@ -14,8 +14,14 @@ RELEASE_KEYSTORE_PASSWORD_VALUE="$(sts2_config_value RELEASE_KEYSTORE_PASSWORD a
 RELEASE_KEYSTORE_ALIAS_VALUE="$(sts2_config_value RELEASE_KEYSTORE_ALIAS android.release_keystore_alias androiddebugkey)"
 
 "$ROOT/tools/android/sync-runtime-from-references.sh"
-"$ROOT/tools/android/build-port-mod.sh"
-"$ROOT/tools/android/stage-bundled-compat-artifacts.sh"
+if [[ -n "${STS2_PREBUILT_COMPAT_APK:-}" ]]; then
+  # Fork (CI): no original game DLLs available, so reuse the compat artifacts
+  # compiled by upstream and shipped in their release APK.
+  python3 "$ROOT/tools/ci/install-prebuilt-compat.py" "$STS2_PREBUILT_COMPAT_APK" "$ROOT/android"
+else
+  "$ROOT/tools/android/build-port-mod.sh"
+  "$ROOT/tools/android/stage-bundled-compat-artifacts.sh"
+fi
 
 GRADLE_ARGS=("$GRADLE_TASK")
 if [[ -n "$RELEASE_KEYSTORE_FILE_VALUE" ]]; then
