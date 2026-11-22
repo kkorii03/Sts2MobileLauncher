@@ -261,9 +261,11 @@ android {
         }
 
         release {
-            // Keep `run-as` available for sideload validation while default
-            // packaging uses release optimizations.
-            debuggable true
+            // Not debuggable: Android 15+ shows a "16KB compatibility" warning
+            // dialog on every launch of a debuggable app with 4KB-aligned
+            // prebuilt .so files, which breaks the native-game feel. Pass
+            // -Psts2Debuggable=true for a diagnostic build that keeps `run-as`.
+            debuggable project.hasProperty('sts2Debuggable') && project.property('sts2Debuggable').toString().toBoolean()
 
             // Signing and zip-aligning are skipped for prebuilt builds, but
             // performed for Godot gradle builds.
