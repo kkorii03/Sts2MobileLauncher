@@ -601,9 +601,10 @@ public final class ExtraSettingsRepository {
 			// Hand sits low like STS1 mobile (card tops ~76% down, bottoms cut off).
 			settings.put("show_more_hand_card_text_lift_height_percent", 25);
 		});
-		// The game targets 60 fps; on 120 Hz panels this gives steadier frame
-		// pacing and less heat (upstream issue #94: 29-38 ms -> ~16.7 ms frames).
-		saveDisplayRefreshRateMode(DISPLAY_REFRESH_RATE_60HZ);
+		// 120 Hz panel + 120 fps game cap (the port-mod raises the PC 60 fps cap
+		// together with this mode; upstream issue #94's uneven frames came from a
+		// 120 Hz panel with a 60 fps cap). "Battery saver (60 Hz)" lowers both.
+		saveDisplayRefreshRateMode(DISPLAY_REFRESH_RATE_HIGH);
 	}
 
 	public void resetPreloadAdvancedDefaults() throws Exception {
