@@ -182,19 +182,70 @@ public class GodotApp extends GodotActivity {
 		}
 		try {
 			android.widget.FrameLayout cover = new android.widget.FrameLayout(this);
-			cover.setBackgroundColor(android.graphics.Color.BLACK);
+			cover.setBackgroundColor(bootBackgroundColor(this));
 			cover.setClickable(true);
-			android.widget.ImageView icon = new android.widget.ImageView(this);
-			icon.setImageResource(R.mipmap.icon);
-			int size = Math.round(112f * getResources().getDisplayMetrics().density);
-			cover.addView(icon, new android.widget.FrameLayout.LayoutParams(size, size, android.view.Gravity.CENTER));
+			cover.addView(createBootLogoView(this), bootLogoLayoutParams(this));
 			addContentView(cover, new android.view.ViewGroup.LayoutParams(
 				android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
 			bootCover = cover;
 			cover.postDelayed(this::removeBootCover, BOOT_COVER_TIMEOUT_MS);
+			// The engine's fragment re-requests visible bars while it attaches (seen as a
+			// status bar + nav buttons over the boot screen on the S24U); hide them again.
+			SystemBarInsetsHelper.hideSystemBars(this);
+			for (long delay : new long[] { 150L, 600L, 1500L, 3000L }) {
+				cover.postDelayed(() -> SystemBarInsetsHelper.hideSystemBars(this), delay);
+			}
 		} catch (Exception exception) {
 			Log.w(TAG, "Boot cover unavailable.", exception);
 		}
+	}
+
+	/**
+	 * STS1 mobile shows its studio logo ~2 s after the tap and keeps it up while loading.
+	 * The personal packer can add assets/boot_logo.png (the game's own logo, cut from its
+	 * intro, never committed to the public repo); it is drawn at its native pixel size, the
+	 * size it had on this screen. Without it, the app icon is used.
+	 */
+	static android.view.View createBootLogoView(Context context) {
+		android.widget.ImageView view = new android.widget.ImageView(context);
+		android.graphics.Bitmap logo = loadBootLogo(context);
+		if (logo != null) {
+			view.setImageBitmap(logo);
+			view.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+		} else {
+			view.setImageResource(R.mipmap.icon);
+		}
+		return view;
+	}
+
+	/** Background behind the boot logo: the logo image's own edge colour, else black. */
+	static int bootBackgroundColor(Context context) {
+		android.graphics.Bitmap logo = loadBootLogo(context);
+		return logo != null ? (logo.getPixel(0, 0) | 0xFF000000) : android.graphics.Color.BLACK;
+	}
+
+	static android.widget.FrameLayout.LayoutParams bootLogoLayoutParams(Context context) {
+		android.graphics.Bitmap logo = loadBootLogo(context);
+		if (logo != null) {
+			return new android.widget.FrameLayout.LayoutParams(logo.getWidth(), logo.getHeight(), android.view.Gravity.CENTER);
+		}
+		int size = Math.round(112f * context.getResources().getDisplayMetrics().density);
+		return new android.widget.FrameLayout.LayoutParams(size, size, android.view.Gravity.CENTER);
+	}
+
+	private static android.graphics.Bitmap cachedBootLogo;
+	private static boolean bootLogoLoaded;
+
+	private static synchronized android.graphics.Bitmap loadBootLogo(Context context) {
+		if (!bootLogoLoaded) {
+			bootLogoLoaded = true;
+			try (InputStream in = context.getAssets().open("boot_logo.png")) {
+				cachedBootLogo = android.graphics.BitmapFactory.decodeStream(in);
+			} catch (IOException ignored) {
+				cachedBootLogo = null;
+			}
+		}
+		return cachedBootLogo;
 	}
 
 	private void removeBootCover() {
@@ -208,6 +259,12 @@ public class GodotApp extends GodotActivity {
 				((android.view.ViewGroup) cover.getParent()).removeView(cover);
 			}
 		}).start();
+	}
+
+	/** True when the boot cover shows the game logo (so the game need not play it again). */
+	public static boolean hasBootLogoFromGame() {
+		GodotApp activity = currentInstance;
+		return activity != null && loadBootLogo(activity) != null;
 	}
 
 	/** Called from the port-mod when the game starts drawing its own logo/menu. */
@@ -232,6 +289,10 @@ public class GodotApp extends GodotActivity {
 		// boot screen and the game (standalone build).
 		if (new PayloadManager(this).isStandaloneBuild()) {
 			SystemBarInsetsHelper.hideSystemBars(this);
+			// The window behind the engine surface showed as a grey frame for ~1 s.
+			if (getWindow() != null) {
+				getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(bootBackgroundColor(this)));
+			}
 		}
 		allowDrawingIntoDisplayCutout();
 		boolean audioCompatibilityMode = false;

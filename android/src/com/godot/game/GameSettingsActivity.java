@@ -428,12 +428,13 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			return;
 		}
 		FrameLayout splash = new FrameLayout(this);
-		splash.setBackgroundColor(Color.BLACK);
+		splash.setBackgroundColor(GodotApp.bootBackgroundColor(this));
 		splash.setClickable(true);
 		LinearLayout box = ExtraSettingsUi.vertical(this);
 		box.setGravity(Gravity.CENTER_HORIZONTAL);
-		ImageView icon = new ImageView(this);
-		icon.setImageResource(R.mipmap.icon);
+		// Same logo (or icon) as GodotApp's boot cover, so splash -> engine boot is seamless.
+		View icon = GodotApp.createBootLogoView(this);
+		FrameLayout.LayoutParams logoParams = GodotApp.bootLogoLayoutParams(this);
 		Runnable openSettingsSecret = this::openSettingsFromSplash;
 		icon.setOnTouchListener((view, event) -> {
 			int action = event.getActionMasked();
@@ -446,7 +447,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 			}
 			return true;
 		});
-		box.addView(icon, new LinearLayout.LayoutParams(ExtraSettingsUi.dp(this, 112), ExtraSettingsUi.dp(this, 112)));
+		box.addView(icon, new LinearLayout.LayoutParams(logoParams.width, logoParams.height));
 		launchSplashProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
 		launchSplashProgress.setMax(100);
 		launchSplashProgress.setIndeterminate(false);
