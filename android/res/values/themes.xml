@@ -17,6 +17,8 @@
 			 the launcher hands over to GodotApp (S24U recording). Plain logo backdrop. -->
 		<item name="windowSplashScreenBackground">#183A49</item>
 		<item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+		<!-- No status bar on the hand-over frame (seen for ~0.5 s at 2 s on the S24U). -->
+		<item name="android:windowFullscreen">true</item>
 		<item name="postSplashScreenTheme">@style/GodotAppMainTheme</item>
 		<item name="android:windowIsTranslucent">false</item>
 	</style>

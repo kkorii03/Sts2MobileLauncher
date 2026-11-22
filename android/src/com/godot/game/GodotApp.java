@@ -174,6 +174,8 @@ public class GodotApp extends GodotActivity {
 	// screen instead, like the launch splash, until the game says it is drawing
 	// (hideBootCoverFromGame) or a safety timeout passes.
 	private static final long BOOT_COVER_TIMEOUT_MS = 30_000L;
+	private static final long BOOT_COVER_HIDE_DELAY_MS = 700L;
+	private static final long BOOT_COVER_FADE_MS = 500L;
 	private android.widget.FrameLayout bootCover;
 
 	private void showBootCover() {
@@ -254,7 +256,9 @@ public class GodotApp extends GodotActivity {
 			return;
 		}
 		bootCover = null;
-		cover.animate().alpha(0f).setDuration(250L).withEndAction(() -> {
+		// Cross-fade into the menu's own 2 s fade from black instead of cutting to black
+		// (STS1 shows ~0.5 s of black between its logo and the menu; we had 1.5 s).
+		cover.animate().setStartDelay(BOOT_COVER_HIDE_DELAY_MS).alpha(0f).setDuration(BOOT_COVER_FADE_MS).withEndAction(() -> {
 			if (cover.getParent() instanceof android.view.ViewGroup) {
 				((android.view.ViewGroup) cover.getParent()).removeView(cover);
 			}
