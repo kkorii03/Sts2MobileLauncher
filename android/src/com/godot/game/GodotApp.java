@@ -165,7 +165,57 @@ public class GodotApp extends GodotActivity {
 		scheduleInGameOverlayAttach("onCreate_after_super");
 		floatingMouseInputController = new FloatingMouseInputController(this);
 		builtinKeyboardController = new BuiltinKeyboardController(this);
+		showBootCover();
 		Log.i(TAG, "DIAG GodotApp.onCreate end windowFocused=" + currentWindowFocused);
+	}
+
+	// Standalone build: between the launcher splash and the game's first real frame (the
+	// Mega Crit logo) the engine boots for ~8 s on a black surface. Keep the game icon on
+	// screen instead, like the launch splash, until the game says it is drawing
+	// (hideBootCoverFromGame) or a safety timeout passes.
+	private static final long BOOT_COVER_TIMEOUT_MS = 30_000L;
+	private android.widget.FrameLayout bootCover;
+
+	private void showBootCover() {
+		if (bootCover != null || !new PayloadManager(this).isStandaloneBuild()) {
+			return;
+		}
+		try {
+			android.widget.FrameLayout cover = new android.widget.FrameLayout(this);
+			cover.setBackgroundColor(android.graphics.Color.BLACK);
+			cover.setClickable(true);
+			android.widget.ImageView icon = new android.widget.ImageView(this);
+			icon.setImageResource(R.mipmap.icon);
+			int size = Math.round(112f * getResources().getDisplayMetrics().density);
+			cover.addView(icon, new android.widget.FrameLayout.LayoutParams(size, size, android.view.Gravity.CENTER));
+			addContentView(cover, new android.view.ViewGroup.LayoutParams(
+				android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+			bootCover = cover;
+			cover.postDelayed(this::removeBootCover, BOOT_COVER_TIMEOUT_MS);
+		} catch (Exception exception) {
+			Log.w(TAG, "Boot cover unavailable.", exception);
+		}
+	}
+
+	private void removeBootCover() {
+		android.widget.FrameLayout cover = bootCover;
+		if (cover == null) {
+			return;
+		}
+		bootCover = null;
+		cover.animate().alpha(0f).setDuration(250L).withEndAction(() -> {
+			if (cover.getParent() instanceof android.view.ViewGroup) {
+				((android.view.ViewGroup) cover.getParent()).removeView(cover);
+			}
+		}).start();
+	}
+
+	/** Called from the port-mod when the game starts drawing its own logo/menu. */
+	public static void hideBootCoverFromGame() {
+		GodotApp activity = currentInstance;
+		if (activity != null) {
+			activity.runOnUiThread(activity::removeBootCover);
+		}
 	}
 
 	private void configureGameBeforeGodot() {
