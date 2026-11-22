@@ -180,7 +180,7 @@ public class GodotApp extends GodotActivity {
 		// Hide the bars before the first frame (Godot re-applies its own immersive
 		// state once the engine is up) so no status bar flashes between the black
 		// boot screen and the game (standalone build).
-		if (new PayloadManager(this).hasBundledPayload()) {
+		if (new PayloadManager(this).isStandaloneBuild()) {
 			SystemBarInsetsHelper.hideSystemBars(this);
 		}
 		allowDrawingIntoDisplayCutout();

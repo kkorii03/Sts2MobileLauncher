@@ -108,7 +108,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		directLaunchRequested = isLauncherDirectLaunchIntent(savedInstanceState);
 		// Standalone build opened from the icon: stay on the black, fullscreen,
 		// landscape launch theme from the manifest so it looks like a game booting.
-		standaloneSplashMode = directLaunchRequested && payloadManager.hasBundledPayload();
+		standaloneSplashMode = directLaunchRequested && payloadManager.isStandaloneBuild();
 		if (!standaloneSplashMode) {
 			setTheme(R.style.Theme_Sts2ExtraSettings);
 		}
@@ -123,7 +123,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		if (standaloneSplashMode) {
 			SystemBarInsetsHelper.hideSystemBars(this);
 		}
-		LauncherShortcuts.update(this, payloadManager.hasBundledPayload());
+		LauncherShortcuts.update(this, payloadManager.isStandaloneBuild());
 		repository = new ExtraSettingsRepository(this);
 		compatPackManager = new CompatPackManager(this);
 		gameBodyVersionManager = new GameBodyVersionManager(this);
@@ -144,7 +144,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		directoriesReady = true;
 		SteamWorkshopDownloadCleaner.maybeRunDailyCleanup(this);
 		installBundledCompatPacksInBackground(false);
-		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this) && payloadManager.hasBundledPayload()) {
+		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this) && payloadManager.isStandaloneBuild()) {
 			applyStandaloneDefaults();
 		}
 		if (!ExtraSettingsPreferences.isFirstRunSetupCompleted(this)) {
@@ -340,7 +340,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 	}
 
 	private void maybeRunLaunchUpdateCheck() {
-		if (launchUpdateCheckRequested || !ExtraSettingsPreferences.isUpdateCheckEnabled(this) || payloadManager.hasBundledPayload()) {
+		if (launchUpdateCheckRequested || !ExtraSettingsPreferences.isUpdateCheckEnabled(this) || payloadManager.isStandaloneBuild()) {
 			return;
 		}
 		launchUpdateCheckRequested = true;
@@ -395,7 +395,7 @@ public class GameSettingsActivity extends AppCompatActivity implements ExtraSett
 		boolean startupGame = ExtraSettingsPreferences.LAUNCHER_STARTUP_GAME.equals(ExtraSettingsPreferences.getLauncherStartupBehavior(this));
 		// Standalone first run: applyStandaloneDefaults() turns "open the game" on
 		// before the launch is attempted.
-		boolean standaloneFirstRun = !ExtraSettingsPreferences.isFirstRunSetupCompleted(this) && payloadManager.hasBundledPayload();
+		boolean standaloneFirstRun = !ExtraSettingsPreferences.isFirstRunSetupCompleted(this) && payloadManager.isStandaloneBuild();
 		if (!startupGame && !standaloneFirstRun) {
 			return false;
 		}

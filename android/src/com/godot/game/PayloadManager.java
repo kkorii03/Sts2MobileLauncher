@@ -68,6 +68,8 @@ public final class PayloadManager {
 	public static final String IMPORT_DIR_NAME = "payload_import";
 	public static final String MANIFEST_FILE_NAME = ".payload_manifest.json";
 	public static final String BUNDLED_PAYLOAD_ASSET = "payload/SlayTheSpire2.zip";
+	/** Added by the personal standalone packer to both the full and the slim update APK. */
+	public static final String STANDALONE_MARKER_ASSET = "standalone_build.marker";
 	public static final String PCK_FILE_NAME = "SlayTheSpire2.pck";
 	public static final String RELEASE_INFO_FILE_NAME = "release_info.json";
 	public static final String ASSEMBLY_DIR_NAME = "data_sts2_windows_x86_64";
@@ -145,7 +147,21 @@ public final class PayloadManager {
 	}
 
 	public boolean hasBundledPayload() {
-		try (InputStream ignored = context.getAssets().open(BUNDLED_PAYLOAD_ASSET)) {
+		return hasAsset(BUNDLED_PAYLOAD_ASSET);
+	}
+
+	/**
+	 * Personal standalone build: either the full APK (game bundled) or the slim update APK
+	 * (same app without the 2 GB game zip, installed over a full one whose payload is already
+	 * imported). Drives the native-game behaviour (direct boot, no launcher UI); payload
+	 * extraction still keys off {@link #hasBundledPayload()}.
+	 */
+	public boolean isStandaloneBuild() {
+		return hasBundledPayload() || hasAsset(STANDALONE_MARKER_ASSET);
+	}
+
+	private boolean hasAsset(String path) {
+		try (InputStream ignored = context.getAssets().open(path)) {
 			return true;
 		} catch (IOException ignored) {
 			return false;

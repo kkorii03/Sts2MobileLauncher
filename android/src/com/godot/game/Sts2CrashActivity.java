@@ -44,7 +44,7 @@ public class Sts2CrashActivity extends AppCompatActivity {
 		if (savedInstanceState == null) {
 			writeCrashLog(fullErrorDetails);
 		}
-		if (new PayloadManager(this).hasBundledPayload()) {
+		if (new PayloadManager(this).isStandaloneBuild()) {
 			showStandaloneCrashDialog();
 			return;
 		}
