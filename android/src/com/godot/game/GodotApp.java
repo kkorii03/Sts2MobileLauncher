@@ -279,6 +279,28 @@ public class GodotApp extends GodotActivity {
 		}
 	}
 
+	private static final String ADVISOR_PACKAGE = "com.kkorii.sts2advisor";
+	private static final String ADVISOR_ACTION = "com.kkorii.sts2advisor.STATE";
+
+	/**
+	 * Called from the port-mod (CardAdvisorBridge) with the v1 state JSON. Explicit
+	 * broadcast to the separate card-advisor overlay app; nothing happens when it is not
+	 * installed or not listening. Never throws back into the game.
+	 */
+	public static void sendAdvisorState(String json) {
+		try {
+			GodotApp activity = currentInstance;
+			if (activity == null || json == null) {
+				return;
+			}
+			Intent intent = new Intent(ADVISOR_ACTION);
+			intent.setPackage(ADVISOR_PACKAGE);
+			intent.putExtra("json", json);
+			activity.getApplicationContext().sendBroadcast(intent);
+		} catch (Throwable ignored) {
+		}
+	}
+
 	private void configureGameBeforeGodot() {
 		AndroidRuntimeEnvironment.configure(this, TAG);
 		Sts2LogcatCollector.startForSelectedProfile(this);
