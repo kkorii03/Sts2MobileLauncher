@@ -301,6 +301,21 @@ public class GodotApp extends GodotActivity {
 		}
 	}
 
+	/** Like sendAdvisorState, for the separate combat-advisor app. */
+	public static void sendCombatState(String json) {
+		try {
+			GodotApp activity = currentInstance;
+			if (activity == null || json == null) {
+				return;
+			}
+			Intent intent = new Intent("com.kkorii.sts2combat.STATE");
+			intent.setPackage("com.kkorii.sts2combat");
+			intent.putExtra("json", json);
+			activity.getApplicationContext().sendBroadcast(intent);
+		} catch (Throwable ignored) {
+		}
+	}
+
 	/**
 	 * Called from the in-game Mobile settings tab: zips the combat logs the player recorded
 	 * (CombatRecorder) and opens the system share sheet. Nothing is sent unless the player

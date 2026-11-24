@@ -29,6 +29,7 @@
         <package android:name="com.valvesoftware.android.steam.community" />
         <!-- Personal card-advisor overlay app; receives explicit state broadcasts. -->
         <package android:name="com.kkorii.sts2advisor" />
+        <package android:name="com.kkorii.sts2combat" />
     </queries>
 
     <application
