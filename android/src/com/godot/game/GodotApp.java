@@ -301,6 +301,74 @@ public class GodotApp extends GodotActivity {
 		}
 	}
 
+	/**
+	 * Called from the in-game Mobile settings tab: zips the combat logs the player recorded
+	 * (CombatRecorder) and opens the system share sheet. Nothing is sent unless the player
+	 * picks a target there.
+	 */
+	public static void shareCombatLogs() {
+		final GodotApp activity = currentInstance;
+		if (activity == null) {
+			return;
+		}
+		new Thread(() -> {
+			try {
+				java.io.File base = activity.getExternalFilesDir(null);
+				java.io.File[] logs = base == null ? null
+						: new java.io.File(base, "combat-log").listFiles((dir, name) -> name.endsWith(".jsonl"));
+				if (logs == null || logs.length == 0) {
+					activity.runOnUiThread(() -> android.widget.Toast.makeText(activity,
+							"아직 저장된 전투 기록이 없어요", android.widget.Toast.LENGTH_LONG).show());
+					return;
+				}
+				java.util.Arrays.sort(logs, (a, b) -> b.getName().compareTo(a.getName()));
+				java.io.File out = new java.io.File(activity.getCacheDir(), "shared");
+				out.mkdirs();
+				java.io.File zip = new java.io.File(out, "sts2-combat-log-"
+						+ new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".zip");
+				java.io.File[] old = out.listFiles((dir, name) -> name.startsWith("sts2-combat-log-"));
+				if (old != null) {
+					for (java.io.File f : old) {
+						f.delete();
+					}
+				}
+				try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(zip))) {
+					byte[] buffer = new byte[65536];
+					z.putNextEntry(new java.util.zip.ZipEntry("app.txt"));
+					z.write(("version=" + BuildConfig.VERSION_NAME + "\nfiles=" + logs.length + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+					z.closeEntry();
+					for (java.io.File f : logs) {
+						z.putNextEntry(new java.util.zip.ZipEntry(f.getName()));
+						try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+							int n;
+							while ((n = in.read(buffer)) > 0) {
+								z.write(buffer, 0, n);
+							}
+						}
+						z.closeEntry();
+					}
+				}
+				android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(activity, BuildConfig.APPLICATION_ID + ".fileprovider", zip);
+				Intent send = new Intent(Intent.ACTION_SEND);
+				send.setType("application/zip");
+				send.putExtra(Intent.EXTRA_STREAM, uri);
+				send.setClipData(android.content.ClipData.newRawUri("", uri));
+				send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+				activity.runOnUiThread(() -> {
+					try {
+						activity.startActivity(Intent.createChooser(send, "전투 기록 보내기"));
+					} catch (Throwable error) {
+						Log.w(TAG, "shareCombatLogs chooser failed", error);
+					}
+				});
+			} catch (Throwable error) {
+				Log.w(TAG, "shareCombatLogs failed", error);
+				activity.runOnUiThread(() -> android.widget.Toast.makeText(activity,
+						"기록을 묶지 못했어요: " + error.getMessage(), android.widget.Toast.LENGTH_LONG).show());
+			}
+		}, "combat-log-share").start();
+	}
+
 	private void configureGameBeforeGodot() {
 		AndroidRuntimeEnvironment.configure(this, TAG);
 		Sts2LogcatCollector.startForSelectedProfile(this);
