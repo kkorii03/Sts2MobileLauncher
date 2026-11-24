@@ -318,8 +318,7 @@ public class GodotApp extends GodotActivity {
 
 	/**
 	 * Called from the in-game Mobile settings tab: zips the combat logs the player recorded
-	 * (CombatRecorder) and opens the system share sheet. Nothing is sent unless the player
-	 * picks a target there.
+	 * (CombatRecorder) into the Downloads folder. Nothing is sent anywhere.
 	 */
 	public static void shareCombatLogs() {
 		final GodotApp activity = currentInstance;
@@ -337,17 +336,18 @@ public class GodotApp extends GodotActivity {
 					return;
 				}
 				java.util.Arrays.sort(logs, (a, b) -> b.getName().compareTo(a.getName()));
-				java.io.File out = new java.io.File(activity.getCacheDir(), "shared");
-				out.mkdirs();
-				java.io.File zip = new java.io.File(out, "sts2-combat-log-"
-						+ new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".zip");
-				java.io.File[] old = out.listFiles((dir, name) -> name.startsWith("sts2-combat-log-"));
-				if (old != null) {
-					for (java.io.File f : old) {
-						f.delete();
-					}
+				String name = "sts2-combat-log-"
+						+ new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".zip";
+				android.content.ContentResolver resolver = activity.getContentResolver();
+				android.content.ContentValues values = new android.content.ContentValues();
+				values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
+				values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/zip");
+				values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS);
+				android.net.Uri uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+				if (uri == null) {
+					throw new java.io.IOException("다운로드 폴더에 파일을 만들지 못함");
 				}
-				try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(zip))) {
+				try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(resolver.openOutputStream(uri))) {
 					byte[] buffer = new byte[65536];
 					z.putNextEntry(new java.util.zip.ZipEntry("app.txt"));
 					z.write(("version=" + BuildConfig.VERSION_NAME + "\nfiles=" + logs.length + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -362,20 +362,12 @@ public class GodotApp extends GodotActivity {
 						}
 						z.closeEntry();
 					}
+				} catch (Throwable error) {
+					resolver.delete(uri, null, null); // never leave a broken zip behind
+					throw error;
 				}
-				android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(activity, BuildConfig.APPLICATION_ID + ".fileprovider", zip);
-				Intent send = new Intent(Intent.ACTION_SEND);
-				send.setType("application/zip");
-				send.putExtra(Intent.EXTRA_STREAM, uri);
-				send.setClipData(android.content.ClipData.newRawUri("", uri));
-				send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-				activity.runOnUiThread(() -> {
-					try {
-						activity.startActivity(Intent.createChooser(send, "전투 기록 보내기"));
-					} catch (Throwable error) {
-						Log.w(TAG, "shareCombatLogs chooser failed", error);
-					}
-				});
+				activity.runOnUiThread(() -> android.widget.Toast.makeText(activity,
+						"다운로드 폴더에 저장했어요: " + name, android.widget.Toast.LENGTH_LONG).show());
 			} catch (Throwable error) {
 				Log.w(TAG, "shareCombatLogs failed", error);
 				activity.runOnUiThread(() -> android.widget.Toast.makeText(activity,
