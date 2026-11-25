@@ -296,6 +296,7 @@ public class GodotApp extends GodotActivity {
 			Intent intent = new Intent(ADVISOR_ACTION);
 			intent.setPackage(ADVISOR_PACKAGE);
 			intent.putExtra("json", json);
+			intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND); // an ordinary broadcast is held back by half a second or more
 			activity.getApplicationContext().sendBroadcast(intent);
 		} catch (Throwable ignored) {
 		}
@@ -311,6 +312,7 @@ public class GodotApp extends GodotActivity {
 			Intent intent = new Intent("com.kkorii.sts2combat.STATE");
 			intent.setPackage("com.kkorii.sts2combat");
 			intent.putExtra("json", json);
+			intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND); // an ordinary broadcast is held back by half a second or more
 			activity.getApplicationContext().sendBroadcast(intent);
 		} catch (Throwable ignored) {
 		}
